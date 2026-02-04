@@ -81,7 +81,7 @@ concurrency:
 
 env:
   TOFU_VERSION: '1.6.0'
-  WORKING_DIR: 'infra/terraform'
+  WORKING_DIR: '.'
   ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
   ARM_CLIENT_SECRET: ${{ secrets.ARM_CLIENT_SECRET }}
   ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
@@ -153,16 +153,16 @@ jobs:
           echo "Comparing $BASE_SHA to HEAD"
           
           # Find changed module directories
-          CHANGED_MODULES=$(git diff --name-only "$BASE_SHA" HEAD -- 'infra/terraform/modules/' 2>/dev/null | \
-            grep '^infra/terraform/modules/' | \
-            cut -d'/' -f4 | \
+          CHANGED_MODULES=$(git diff --name-only "$BASE_SHA" HEAD -- 'modules/' 2>/dev/null | \
+            grep '^modules/' | \
+            cut -d'/' -f2 | \
             sort -u | \
             jq -R -s -c 'split("\n") | map(select(length > 0))' || echo '[]')
           
           # Check if root module files changed
           STACK_CHANGED=$(git diff --name-only "$BASE_SHA" HEAD -- \
-            'infra/terraform/main.tf' 'infra/terraform/variables.tf' 'infra/terraform/outputs.tf' \
-            'infra/terraform/providers.tf' 'infra/terraform/environments/' 2>/dev/null | wc -l)
+            'main.tf' 'variables.tf' 'outputs.tf' \
+            'providers.tf' 'environments/' 2>/dev/null | wc -l)
           
           echo "Changed modules: $CHANGED_MODULES"
           echo "Stack files changed: $STACK_CHANGED"
@@ -277,7 +277,7 @@ jobs:
               PATCH=$(echo "$VERSION" | cut -d. -f3)
               
               # Get commits affecting this module since last tag
-              COMMITS=$(git log --oneline "$LATEST_TAG"..HEAD -- "infra/terraform/modules/$module" 2>/dev/null || echo "")
+              COMMITS=$(git log --oneline "$LATEST_TAG"..HEAD -- "modules/$module" 2>/dev/null || echo "")
               
               if [[ -z "$COMMITS" ]]; then
                 echo "No commits found for $module since $LATEST_TAG, skipping"
@@ -302,7 +302,7 @@ jobs:
             NEW_TAG="${TAG_PREFIX}/${NEW_VERSION}"
             
             # Generate changelog for tag message
-            CHANGELOG=$(git log --pretty=format:"- %s (%h)" "$COMPARE_REF"..HEAD -- "infra/terraform/modules/$module" 2>/dev/null | head -20)
+            CHANGELOG=$(git log --pretty=format:"- %s (%h)" "$COMPARE_REF"..HEAD -- "modules/$module" 2>/dev/null | head -20)
             
             TAG_MESSAGE="Release $module $NEW_VERSION
 
@@ -335,7 +335,7 @@ jobs:
           echo "Use these tags in your root module:" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`hcl" >> $GITHUB_STEP_SUMMARY
           echo "module \"azurerm-aks\" {" >> $GITHUB_STEP_SUMMARY
-          echo "  source = \"git::https://github.com/${{ github.repository }}.git//infra/terraform/modules/azurerm-aks-tf?ref=infra/aks/vX.Y.Z\"" >> $GITHUB_STEP_SUMMARY
+          echo "  source = \"git::https://github.com/${{ github.repository }}.git//modules/azurerm-aks-tf?ref=infra/aks/vX.Y.Z\"" >> $GITHUB_STEP_SUMMARY
           echo "}" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
 
