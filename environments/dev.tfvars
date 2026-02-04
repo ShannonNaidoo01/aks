@@ -2,7 +2,9 @@
 # Development Environment Configuration
 # ═══════════════════════════════════════════════════════════════════════════════
 
-environment = "dev"
+environment        = "dev"
+location           = "uksouth"
+kubernetes_version = "1.32"
 
 tags = {
   project     = "tune-exchange"
@@ -19,21 +21,18 @@ aks_sku_tier = "Free"
 # Node Pools
 # ─────────────────────────────────────────────────────────────────────────────
 
-# System node pool - uses defaults (Standard_D2s_v5, 2 nodes, zones 1,2,3)
+# System node pool - B2s for dev (quota friendly)
 system_node_pool = {
-  max_count = 3  # Override: limit to 3 for dev
+  vm_size             = "Standard_B2s"
+  node_count          = 1
+  min_count           = 1
+  max_count           = 3
+  enable_auto_scaling = true
+  zones               = [] # B-series doesn't support zones
 }
 
-# Workload node pool - for application workloads
-node_pools = {
-  workload = {
-    vm_size   = "Standard_D4s_v5"
-    max_count = 5
-    node_labels = {
-      "workload-type" = "application"
-    }
-  }
-}
+# No additional node pools for dev (keep costs low, avoid quota issues)
+node_pools = {}
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Storage (LRS for dev, use ZRS for production)
