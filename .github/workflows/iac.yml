@@ -42,16 +42,20 @@ on:
       - dev
       - stg
       - prd
-      - feat/iac    # Temporary: for testing IaC changes
+      - main
     paths:
-      - 'infra/terraform/**'
+      - '*.tf'
+      - 'modules/**'
+      - 'environments/**'
       - '.github/workflows/iac.yml'
   
   # PR validation (plans against dev)
   pull_request:
-    branches: [dev]
+    branches: [dev, main]
     paths:
-      - 'infra/terraform/**'
+      - '*.tf'
+      - 'modules/**'
+      - 'environments/**'
       - '.github/workflows/iac.yml'
   
   # Manual trigger
@@ -111,9 +115,10 @@ jobs:
             ENV="dev"
           else
             BRANCH="${{ github.ref_name }}"
-            # Map branch to environment (feature branches default to dev)
+            # Map branch to environment (main and feature branches default to dev)
             case "$BRANCH" in
               dev|stg|prd) ENV="$BRANCH" ;;
+              main)        ENV="dev" ;;  # main branch deploys to dev
               *)           ENV="dev" ;;  # Feature branches use dev environment
             esac
           fi
