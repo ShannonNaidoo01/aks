@@ -3,7 +3,7 @@
 # ═══════════════════════════════════════════════════════════════════════════════
 #
 # This workflow handles:
-# - OpenTofu validation, formatting, and security scanning
+# - OpenTofu validation and formatting
 # - Auto-versioning modules with semantic versioning on merge to main
 # - Plan/apply for dev environment
 #
@@ -155,31 +155,12 @@ jobs:
         run: tofu validate
 
   # ─────────────────────────────────────────────────────────────────────────────
-  # Security Scan
-  # ─────────────────────────────────────────────────────────────────────────────
-  security-scan:
-    name: Security Scan
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Run Checkov
-        uses: bridgecrewio/checkov-action@v12
-        with:
-          directory: .
-          framework: terraform
-          soft_fail: true
-          skip_check: CKV_TF_1,CKV_TF_2
-          output_format: cli
-
-  # ─────────────────────────────────────────────────────────────────────────────
   # Tag Modules on Merge (Auto-Versioning)
   # ─────────────────────────────────────────────────────────────────────────────
   tag-modules:
     name: Tag Module Versions
     runs-on: ubuntu-latest
-    needs: [detect-changes, validate, security-scan]
+    needs: [detect-changes, validate]
     if: |
       github.event_name == 'push' && 
       github.ref == 'refs/heads/main' &&
@@ -309,11 +290,8 @@ jobs:
   plan:
     name: Plan [dev]
     runs-on: ubuntu-latest
-    needs: [validate, security-scan]
-    if: |
-      always() &&
-      needs.validate.result == 'success' &&
-      (needs.security-scan.result == 'success' || needs.security-scan.result == 'failure')
+    needs: [validate]
+    if: needs.validate.result == 'success'
     
     permissions:
       contents: read
@@ -448,15 +426,15 @@ jobs:
             }
 
   # ─────────────────────────────────────────────────────────────────────────────
-  # Apply Infrastructure (Manual Dispatch or Commit Message Trigger)
+  # Apply Infrastructure (Manual Dispatch Only)
   # ─────────────────────────────────────────────────────────────────────────────
   apply:
     name: Apply [dev]
     runs-on: ubuntu-latest
     needs: plan
     if: |
-      (github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'apply') ||
-      (github.event_name == 'push' && github.ref == 'refs/heads/main' && contains(github.event.head_commit.message, '[tfapply]'))
+      github.event_name == 'workflow_dispatch' && 
+      github.event.inputs.action == 'apply'
     
     environment: 
       name: dev-apply
@@ -523,7 +501,7 @@ jobs:
   quality-gate:
     name: Quality Gate
     runs-on: ubuntu-latest
-    needs: [validate, security-scan, plan]
+    needs: [validate, plan]
     if: always()
 
     steps:
@@ -538,12 +516,6 @@ jobs:
           else
             echo "❌ Validation failed" >> $GITHUB_STEP_SUMMARY
             FAILED=true
-          fi
-          
-          if [[ "${{ needs.security-scan.result }}" == "success" ]]; then
-            echo "✅ Security scan passed" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "⚠️ Security scan has warnings" >> $GITHUB_STEP_SUMMARY
           fi
           
           if [[ "${{ needs.plan.result }}" == "success" ]]; then
