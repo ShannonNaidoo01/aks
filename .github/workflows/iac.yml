@@ -3,9 +3,16 @@
 # ═══════════════════════════════════════════════════════════════════════════════
 #
 # This workflow handles:
-# - Terraform validation, formatting, and security scanning
-# - Multi-environment plan/apply with manual approval gates
-# - Drift detection on schedule
+# - OpenTofu validation, formatting, and security scanning
+# - Auto-versioning modules with semantic versioning on merge to main
+# - Plan/apply for dev environment
+#
+# Module Versioning Strategy:
+# - Modules are tagged as infra/{module}/v{major}.{minor}.{patch}
+# - Version bumps follow conventional commits:
+#   - feat: = minor bump
+#   - fix: = patch bump
+#   - BREAKING CHANGE or feat!: = major bump
 #
 # Required GitHub Secrets:
 # - ARM_CLIENT_ID: Azure Service Principal Client ID
@@ -51,8 +58,7 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
-  TF_VERSION: '1.7.0'
-  # Azure credentials from secrets
+  TOFU_VERSION: '1.6.0'
   ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
   ARM_CLIENT_SECRET: ${{ secrets.ARM_CLIENT_SECRET }}
   ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
@@ -64,7 +70,68 @@ env:
 
 jobs:
   # ─────────────────────────────────────────────────────────────────────────────
-  # Validate Terraform
+  # Detect Changed Modules
+  # ─────────────────────────────────────────────────────────────────────────────
+  detect-changes:
+    name: Detect Changes
+    runs-on: ubuntu-latest
+    outputs:
+      modules: ${{ steps.changes.outputs.modules }}
+      modules_list: ${{ steps.changes.outputs.modules_list }}
+      any_module_changed: ${{ steps.changes.outputs.any_module_changed }}
+      stack_changed: ${{ steps.changes.outputs.stack_changed }}
+    
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect changed modules
+        id: changes
+        run: |
+          # Determine base commit for diff
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            BASE_SHA="${{ github.event.pull_request.base.sha }}"
+          else
+            BASE_SHA="${{ github.event.before }}"
+            if [[ "$BASE_SHA" == "0000000000000000000000000000000000000000" ]]; then
+              BASE_SHA=$(git rev-parse HEAD~1 2>/dev/null || echo "${{ github.sha }}")
+            fi
+          fi
+          
+          echo "Comparing $BASE_SHA to HEAD"
+          
+          # Find changed module directories
+          CHANGED_MODULES=$(git diff --name-only "$BASE_SHA" HEAD -- 'modules/' 2>/dev/null | \
+            grep '^modules/' | \
+            cut -d'/' -f2 | \
+            sort -u | \
+            jq -R -s -c 'split("\n") | map(select(length > 0))' || echo '[]')
+          
+          # Check if root module files changed
+          STACK_CHANGED=$(git diff --name-only "$BASE_SHA" HEAD -- \
+            'main.tf' 'variables.tf' 'outputs.tf' 'providers.tf' 'environments/' 2>/dev/null | wc -l)
+          
+          echo "Changed modules: $CHANGED_MODULES"
+          echo "Stack files changed: $STACK_CHANGED"
+          
+          echo "modules=$CHANGED_MODULES" >> $GITHUB_OUTPUT
+          echo "modules_list=$(echo $CHANGED_MODULES | jq -r 'join(",")')" >> $GITHUB_OUTPUT
+          
+          if [[ "$CHANGED_MODULES" != "[]" && "$CHANGED_MODULES" != "" && "$CHANGED_MODULES" != "null" ]]; then
+            echo "any_module_changed=true" >> $GITHUB_OUTPUT
+          else
+            echo "any_module_changed=false" >> $GITHUB_OUTPUT
+          fi
+          
+          if [[ "$STACK_CHANGED" -gt 0 ]]; then
+            echo "stack_changed=true" >> $GITHUB_OUTPUT
+          else
+            echo "stack_changed=false" >> $GITHUB_OUTPUT
+          fi
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Validate OpenTofu
   # ─────────────────────────────────────────────────────────────────────────────
   validate:
     name: Validate
@@ -73,19 +140,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
+      - name: Install OpenTofu
+        uses: opentofu/setup-opentofu@v1
         with:
-          terraform_version: ${{ env.TF_VERSION }}
+          tofu_version: ${{ env.TOFU_VERSION }}
 
       - name: Format Check
-        run: terraform fmt -check -recursive -diff
+        run: tofu fmt -check -recursive -diff
 
       - name: Initialize (validation only)
-        run: terraform init -backend=false
+        run: tofu init -backend=false
 
       - name: Validate
-        run: terraform validate
+        run: tofu validate
 
   # ─────────────────────────────────────────────────────────────────────────────
   # Security Scan
@@ -105,6 +172,136 @@ jobs:
           soft_fail: true
           skip_check: CKV_TF_1,CKV_TF_2
           output_format: cli
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Tag Modules on Merge (Auto-Versioning)
+  # ─────────────────────────────────────────────────────────────────────────────
+  tag-modules:
+    name: Tag Module Versions
+    runs-on: ubuntu-latest
+    needs: [detect-changes, validate, security-scan]
+    if: |
+      github.event_name == 'push' && 
+      github.ref == 'refs/heads/main' &&
+      needs.detect-changes.outputs.any_module_changed == 'true' &&
+      needs.validate.result == 'success'
+    
+    permissions:
+      contents: write
+
+    outputs:
+      tagged_modules: ${{ steps.tag.outputs.tagged_modules }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Tag changed modules
+        id: tag
+        env:
+          CHANGED_MODULES: ${{ needs.detect-changes.outputs.modules_list }}
+        run: |
+          TAGGED_MODULES=""
+          IFS=',' read -ra MODULES <<< "$CHANGED_MODULES"
+          
+          for module in "${MODULES[@]}"; do
+            if [[ -z "$module" ]]; then
+              continue
+            fi
+            
+            # Map module directory to tag prefix
+            case "$module" in
+              azurerm-aks-tf)       TAG_PREFIX="infra/aks" ;;
+              helm-postgres-tf)     TAG_PREFIX="infra/postgres" ;;
+              helm-kafka-tf)        TAG_PREFIX="infra/kafka" ;;
+              *)                    TAG_PREFIX="infra/${module%-tf}" ;;
+            esac
+            
+            # Get latest version tag for this module
+            LATEST_TAG=$(git tag -l "${TAG_PREFIX}/v*" | sort -V | tail -1)
+            
+            if [[ -z "$LATEST_TAG" ]]; then
+              # First version
+              NEW_VERSION="v1.0.0"
+              COMPARE_REF="HEAD~10"
+            else
+              COMPARE_REF="$LATEST_TAG"
+              
+              # Extract version components
+              VERSION=${LATEST_TAG##*/}
+              MAJOR=$(echo "$VERSION" | cut -d. -f1 | tr -d 'v')
+              MINOR=$(echo "$VERSION" | cut -d. -f2)
+              PATCH=$(echo "$VERSION" | cut -d. -f3)
+              
+              # Get commits affecting this module since last tag
+              COMMITS=$(git log --oneline "$LATEST_TAG"..HEAD -- "modules/$module" 2>/dev/null || echo "")
+              
+              if [[ -z "$COMMITS" ]]; then
+                echo "No commits found for $module since $LATEST_TAG, skipping"
+                continue
+              fi
+              
+              # Determine version bump from conventional commits
+              if echo "$COMMITS" | grep -qiE "(BREAKING CHANGE|^[a-f0-9]+ [a-z]+(\([^)]+\))?!:)"; then
+                NEW_VERSION="v$((MAJOR + 1)).0.0"
+                BUMP_REASON="BREAKING CHANGE"
+              elif echo "$COMMITS" | grep -qiE "^[a-f0-9]+ feat(\([^)]+\))?:"; then
+                NEW_VERSION="v${MAJOR}.$((MINOR + 1)).0"
+                BUMP_REASON="feat"
+              else
+                NEW_VERSION="v${MAJOR}.${MINOR}.$((PATCH + 1))"
+                BUMP_REASON="fix/chore"
+              fi
+              
+              echo "Version bump for $module: $VERSION -> $NEW_VERSION (reason: $BUMP_REASON)"
+            fi
+            
+            NEW_TAG="${TAG_PREFIX}/${NEW_VERSION}"
+            
+            # Generate changelog for tag message
+            CHANGELOG=$(git log --pretty=format:"- %s (%h)" "$COMPARE_REF"..HEAD -- "modules/$module" 2>/dev/null | head -20)
+            
+            TAG_MESSAGE="Release $module $NEW_VERSION
+
+          Changes:
+          $CHANGELOG"
+            
+            echo "Creating tag: $NEW_TAG"
+            git tag -a "$NEW_TAG" -m "$TAG_MESSAGE"
+            git push origin "$NEW_TAG"
+            
+            echo "✅ Tagged $module as $NEW_TAG"
+            TAGGED_MODULES="${TAGGED_MODULES}${module}:${NEW_TAG},"
+          done
+          
+          echo "tagged_modules=${TAGGED_MODULES%,}" >> $GITHUB_OUTPUT
+
+      - name: Summary
+        run: |
+          echo "## 🏷️ Module Tags Created" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          IFS=',' read -ra TAGS <<< "${{ steps.tag.outputs.tagged_modules }}"
+          for tag_info in "${TAGS[@]}"; do
+            if [[ -n "$tag_info" ]]; then
+              MODULE=$(echo "$tag_info" | cut -d: -f1)
+              TAG=$(echo "$tag_info" | cut -d: -f2)
+              echo "- **$MODULE**: \`$TAG\`" >> $GITHUB_STEP_SUMMARY
+            fi
+          done
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Use these tags in your root module:" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`hcl" >> $GITHUB_STEP_SUMMARY
+          echo "module \"azurerm-aks\" {" >> $GITHUB_STEP_SUMMARY
+          echo "  source = \"git::https://github.com/${{ github.repository }}.git//modules/azurerm-aks-tf?ref=infra/aks/vX.Y.Z\"" >> $GITHUB_STEP_SUMMARY
+          echo "}" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
 
   # ─────────────────────────────────────────────────────────────────────────────
   # Plan Infrastructure (Dev Only)
@@ -128,25 +325,26 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
+      - name: Install OpenTofu
+        uses: opentofu/setup-opentofu@v1
         with:
-          terraform_version: ${{ env.TF_VERSION }}
+          tofu_version: ${{ env.TOFU_VERSION }}
 
-      - name: Initialize
+      - name: Initialize OpenTofu
+        env:
+          ARM_ACCESS_KEY: ${{ secrets.STATE_ACCESS_KEY }}
         run: |
-          terraform init \
+          tofu init \
             -backend-config="storage_account_name=stiacstatedev" \
             -backend-config="container_name=tfstate" \
-            -backend-config="key=dev/terraform.tfstate" \
-            -backend-config="access_key=${{ secrets.STATE_ACCESS_KEY }}"
+            -backend-config="key=dev/terraform.tfstate"
 
-      - name: Plan
+      - name: Plan OpenTofu
         id: plan
         continue-on-error: true
         run: |
           set +e
-          terraform plan \
+          tofu plan \
             -var-file="environments/dev.tfvars" \
             -out=tfplan-dev \
             -detailed-exitcode \
@@ -155,11 +353,17 @@ jobs:
           EXIT_CODE=$?
           echo "exitcode=$EXIT_CODE" >> $GITHUB_OUTPUT
           
-          # Exit codes: 0 = no changes, 1 = error, 2 = changes present
           if [[ $EXIT_CODE -eq 1 ]]; then
             echo "❌ Plan failed"
             exit 1
           fi
+
+      - name: Display Plan Output
+        run: |
+          echo "## OpenTofu Plan Output" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          cat plan-output.txt >> $GITHUB_STEP_SUMMARY || true
+          echo '```' >> $GITHUB_STEP_SUMMARY
 
       - name: Create plan metadata
         run: |
@@ -201,7 +405,7 @@ jobs:
               ? planOutput.substring(0, 60000) + '\n\n... (truncated)'
               : planOutput;
             
-            const body = `## Terraform Plan: \`dev\` ${status}
+            const body = `## OpenTofu Plan: \`dev\` ${status}
             
             <details>
             <summary>Click to expand plan output</summary>
@@ -224,7 +428,7 @@ jobs:
             
             const botComment = comments.find(c => 
               c.user.login === 'github-actions[bot]' && 
-              c.body.includes(`Terraform Plan: \`dev\``)
+              c.body.includes(`OpenTofu Plan: \`dev\``)
             );
             
             if (botComment) {
@@ -261,10 +465,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
+      - name: Install OpenTofu
+        uses: opentofu/setup-opentofu@v1
         with:
-          terraform_version: ${{ env.TF_VERSION }}
+          tofu_version: ${{ env.TOFU_VERSION }}
 
       - name: Download Plan
         uses: actions/download-artifact@v4
@@ -275,7 +479,7 @@ jobs:
       - name: Verify Plan Freshness
         run: |
           if [[ ! -f "tfplan-dev.meta.json" ]]; then
-            echo "❌ Plan metadata not found. Cannot verify plan freshness."
+            echo "❌ Plan metadata not found."
             exit 1
           fi
           
@@ -291,18 +495,19 @@ jobs:
           
           echo "✅ Plan is fresh"
 
-      - name: Initialize
+      - name: Initialize OpenTofu
+        env:
+          ARM_ACCESS_KEY: ${{ secrets.STATE_ACCESS_KEY }}
         run: |
-          terraform init \
+          tofu init \
             -backend-config="storage_account_name=stiacstatedev" \
             -backend-config="container_name=tfstate" \
-            -backend-config="key=dev/terraform.tfstate" \
-            -backend-config="access_key=${{ secrets.STATE_ACCESS_KEY }}"
+            -backend-config="key=dev/terraform.tfstate"
 
-      - name: Apply
+      - name: Apply OpenTofu
         run: |
           echo "🚀 Applying infrastructure changes to dev..."
-          terraform apply -auto-approve "tfplan-dev"
+          tofu apply -auto-approve tfplan-dev
 
       - name: Summary
         run: |
@@ -319,7 +524,7 @@ jobs:
     name: Quality Gate
     runs-on: ubuntu-latest
     needs: [validate, security-scan, plan]
-    if: always() && github.event_name != 'schedule'
+    if: always()
 
     steps:
       - name: Evaluate Results
@@ -342,9 +547,9 @@ jobs:
           fi
           
           if [[ "${{ needs.plan.result }}" == "success" ]]; then
-            echo "✅ Terraform plan succeeded" >> $GITHUB_STEP_SUMMARY
+            echo "✅ OpenTofu plan succeeded" >> $GITHUB_STEP_SUMMARY
           else
-            echo "❌ Terraform plan failed" >> $GITHUB_STEP_SUMMARY
+            echo "❌ OpenTofu plan failed" >> $GITHUB_STEP_SUMMARY
             FAILED=true
           fi
           

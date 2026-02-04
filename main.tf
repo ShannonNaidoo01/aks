@@ -91,24 +91,3 @@ module "azurerm-aks" {
   azure_rbac_enabled     = var.azure_rbac_enabled
 }
 
-# ------------------------------------------------------------------------------
-# Call the postgres module.
-# ------------------------------------------------------------------------------
-module "postgres" {
-  source = "./modules/helm-postgres-tf"
-
-  aks_cluster_name = local.aks_cluster_name
-
-  depends_on = [module.azurerm-aks]
-}
-
-# ------------------------------------------------------------------------------
-# Call the kafka module.
-# ------------------------------------------------------------------------------
-module "kafka" {
-  source = "./modules/helm-kafka-tf"
-
-  aks_cluster_name = local.aks_cluster_name
-
-  depends_on = [module.azurerm-aks]
-}

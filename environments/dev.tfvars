@@ -28,7 +28,7 @@ service_cidr              = "10.1.0.0/16"
 dns_service_ip            = "10.1.0.10"
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Node Pools (smaller for dev)
+# Node Pools
 # ─────────────────────────────────────────────────────────────────────────────
 
 system_node_pool = {
@@ -42,33 +42,8 @@ system_node_pool = {
   zones               = ["1"]
 }
 
-node_pools = {
-  webapps = {
-    vm_size             = "Standard_D2s_v5"
-    node_count          = 1
-    min_count           = 1
-    max_count           = 3
-    os_disk_size_gb     = 50
-    enable_auto_scaling = true
-    node_labels = {
-      "workload-type" = "web"
-    }
-    node_taints = []
-  }
-  postgres = {
-    vm_size             = "Standard_D4s_v5"
-    node_count          = 1
-    min_count           = 1
-    max_count           = 2
-    os_disk_size_gb     = 100
-    enable_auto_scaling = true
-    ultra_ssd_enabled   = false
-    node_labels = {
-      "workload-type" = "database"
-    }
-    node_taints = ["workload=postgres:NoSchedule"]
-  }
-}
+# No additional node pools for dev (keep costs low)
+node_pools = {}
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Storage
@@ -78,8 +53,7 @@ storage_account_tier             = "Standard"
 storage_account_replication_type = "LRS"
 
 storage_containers = [
-  { name = "data" },
-  { name = "backups" }
+  { name = "data" }
 ]
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -99,15 +73,4 @@ azure_rbac_enabled     = true
 # Workload Identities
 # ─────────────────────────────────────────────────────────────────────────────
 
-workload_identities = {
-  storage-access = {
-    namespace       = "default"
-    service_account = "storage-sa"
-    description     = "Identity for applications accessing Azure Storage"
-  }
-  postgres-access = {
-    namespace       = "postgres"
-    service_account = "postgres-sa"
-    description     = "Identity for PostgreSQL workloads"
-  }
-}
+workload_identities = {}
