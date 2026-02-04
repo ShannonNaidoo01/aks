@@ -21,7 +21,7 @@ aks_sku_tier = "Free"
 # Node Pools
 # ─────────────────────────────────────────────────────────────────────────────
 
-# System node pool - B2s for dev (quota friendly)
+# System node pools - B2s for dev (quota friendly)
 system_node_pool = {
   vm_size             = "Standard_B2s"
   node_count          = 1
