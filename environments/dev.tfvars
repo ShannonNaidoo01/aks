@@ -39,7 +39,7 @@ system_node_pool = {
   max_count           = 3
   os_disk_size_gb     = 50
   enable_auto_scaling = true
-  zones               = []  # B-series doesn't support zones
+  zones               = [] # B-series doesn't support zones
 }
 
 # No additional node pools for dev (keep costs low)
