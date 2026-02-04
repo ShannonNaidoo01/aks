@@ -33,13 +33,13 @@ dns_service_ip            = "10.1.0.10"
 
 system_node_pool = {
   name                = "system"
-  vm_size             = "Standard_D2s_v5"
+  vm_size             = "Standard_B2s"
   node_count          = 1
   min_count           = 1
   max_count           = 3
   os_disk_size_gb     = 50
   enable_auto_scaling = true
-  zones               = ["1"]
+  zones               = []  # B-series doesn't support zones
 }
 
 # No additional node pools for dev (keep costs low)
