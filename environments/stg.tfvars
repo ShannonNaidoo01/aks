@@ -21,30 +21,18 @@ aks_sku_tier = "Standard"
 # Node Pools
 # ─────────────────────────────────────────────────────────────────────────────
 
-# System node pool - D2s_v5 for staging
+# System node pool - B2s for staging (quota friendly)
 system_node_pool = {
-  vm_size             = "Standard_D2s_v5"
-  node_count          = 2
-  min_count           = 2
-  max_count           = 4
+  vm_size             = "Standard_B2s"
+  node_count          = 1
+  min_count           = 1
+  max_count           = 3
   enable_auto_scaling = true
-  zones               = ["1", "2", "3"]
+  zones               = [] # B-series doesn't support zones
 }
 
-# Workload node pool - for application workloads
-node_pools = {
-  workload = {
-    vm_size             = "Standard_D4s_v5"
-    node_count          = 2
-    min_count           = 2
-    max_count           = 6
-    enable_auto_scaling = true
-    zones               = ["1", "2", "3"]
-    node_labels = {
-      "workload-type" = "application"
-    }
-  }
-}
+# No additional node pools (quota constraints)
+node_pools = {}
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Storage (ZRS for staging - mirrors production)

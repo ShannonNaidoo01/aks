@@ -21,30 +21,20 @@ aks_sku_tier = "Standard"
 # Node Pools
 # ─────────────────────────────────────────────────────────────────────────────
 
-# System node pool - D4s_v5 for production
+# System node pool - B2s for production (quota friendly)
+# TODO: Upgrade to D-series VMs after requesting quota increase
 system_node_pool = {
-  vm_size             = "Standard_D4s_v5"
-  node_count          = 3
-  min_count           = 3
-  max_count           = 6
+  vm_size             = "Standard_B2s"
+  node_count          = 1
+  min_count           = 1
+  max_count           = 3
   enable_auto_scaling = true
-  zones               = ["1", "2", "3"]
+  zones               = [] # B-series doesn't support zones
 }
 
-# Workload node pools - for application workloads
-node_pools = {
-  workload = {
-    vm_size             = "Standard_D8s_v5"
-    node_count          = 3
-    min_count           = 3
-    max_count           = 10
-    enable_auto_scaling = true
-    zones               = ["1", "2", "3"]
-    node_labels = {
-      "workload-type" = "application"
-    }
-  }
-}
+# No additional node pools (quota constraints)
+# TODO: Add workload pools after requesting quota increase
+node_pools = {}
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Storage (ZRS for production - zone redundant)
