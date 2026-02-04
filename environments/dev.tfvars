@@ -14,7 +14,7 @@ tags = {
 # AKS Cluster
 # ─────────────────────────────────────────────────────────────────────────────
 
-kubernetes_version      = "1.29"
+kubernetes_version      = "1.32"
 aks_sku_tier            = "Free"
 private_cluster_enabled = false
 
