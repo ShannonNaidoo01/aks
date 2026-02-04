@@ -32,6 +32,7 @@ variable "aks_cluster_name" {
 variable "kubernetes_version" {
   description = "Kubernetes version for the AKS cluster"
   type        = string
+  default     = "1.29"
 }
 
 variable "aks_sku_tier" {
@@ -98,7 +99,7 @@ variable "node_pools" {
   description = "Map of additional node pools to create"
   type = map(object({
     vm_size                      = string
-    node_count                   = optional(number, 1)
+    node_count                   = optional(number, 2)
     min_count                    = optional(number, 1)
     max_count                    = optional(number, 10)
     os_disk_size_gb              = optional(number, 100)
@@ -119,33 +120,7 @@ variable "node_pools" {
     orchestrator_version         = optional(string, null)
     proximity_placement_group_id = optional(string, null)
   }))
-  default = {
-    webapps = {
-      vm_size             = "Standard_D4s_v5"
-      node_count          = 2
-      min_count           = 2
-      max_count           = 10
-      os_disk_size_gb     = 100
-      enable_auto_scaling = true
-      node_labels = {
-        "workload-type" = "web"
-      }
-      node_taints = []
-    }
-    postgres = {
-      vm_size             = "Standard_E8s_v5"
-      node_count          = 2
-      min_count           = 2
-      max_count           = 8
-      os_disk_size_gb     = 256
-      enable_auto_scaling = true
-      ultra_ssd_enabled   = true
-      node_labels = {
-        "workload-type" = "database"
-      }
-      node_taints = ["workload=postgres:NoSchedule"]
-    }
-  }
+  default = {}
 }
 
 # -----------------------------------------------------------------------------
@@ -177,8 +152,7 @@ variable "storage_containers" {
     access_type = optional(string, "private")
   }))
   default = [
-    { name = "data" },
-    { name = "backups" }
+    { name = "data" }
   ]
 }
 
@@ -209,23 +183,7 @@ variable "workload_identities" {
     service_account = string
     description     = optional(string, "")
   }))
-  default = {
-    storage-access = {
-      namespace       = "default"
-      service_account = "storage-sa"
-      description     = "Identity for applications accessing Azure Storage"
-    }
-    postgres-access = {
-      namespace       = "postgres"
-      service_account = "postgres-sa"
-      description     = "Identity for applications accessing PostgreSQL"
-    }
-    kafka-access = {
-      namespace       = "kafka"
-      service_account = "kafka-sa"
-      description     = "Identity for applications accessing Kafka/Event Hubs"
-    }
-  }
+  default = {}
 }
 
 # -----------------------------------------------------------------------------

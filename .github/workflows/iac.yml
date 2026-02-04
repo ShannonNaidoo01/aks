@@ -1,11 +1,12 @@
 # ═══════════════════════════════════════════════════════════════════════════════
-# Infrastructure as Code Pipeline - AKS Deployment
+# Infrastructure as Code Pipeline - Multi-Environment AKS Deployment
 # ═══════════════════════════════════════════════════════════════════════════════
 #
 # This workflow handles:
 # - OpenTofu validation and formatting
 # - Auto-versioning modules with semantic versioning on merge to main
-# - Plan/apply for dev environment
+# - Plan/apply for dev, stg, prd environments
+# - Branch-based deployment (push to dev/stg/prd branch)
 #
 # Module Versioning Strategy:
 # - Modules are tagged as infra/{module}/v{major}.{minor}.{patch}
@@ -14,36 +15,57 @@
 #   - fix: = patch bump
 #   - BREAKING CHANGE or feat!: = major bump
 #
-# Required GitHub Secrets:
+# Environments:
+# - dev: Development environment (branch: dev)
+# - stg: Staging environment (branch: stg)  
+# - prd: Production environment (branch: prd)
+#
+# Required GitHub Secrets (per environment):
 # - ARM_CLIENT_ID: Azure Service Principal Client ID
 # - ARM_CLIENT_SECRET: Azure Service Principal Client Secret
 # - ARM_SUBSCRIPTION_ID: Azure Subscription ID
 # - ARM_TENANT_ID: Azure AD Tenant ID
 # - STATE_ACCESS_KEY: Azure Storage Account access key for tfstate
 #
+# Deploy Commands:
+# - Plan only: Push to branch
+# - Apply: Push with [tfapply] in commit message
+#
 # ═══════════════════════════════════════════════════════════════════════════════
 
 name: Infrastructure as Code
 
 on:
-  pull_request:
-    branches: [main]
-    paths:
-      - '*.tf'
-      - 'modules/**'
-      - 'environments/**'
-      - '.github/workflows/iac.yml'
-  
+  # Branch-based deployment
   push:
-    branches: [main]
+    branches:
+      - dev
+      - stg
+      - prd
+      - feat/iac    # Temporary: for testing IaC changes
     paths:
-      - '*.tf'
-      - 'modules/**'
-      - 'environments/**'
+      - 'infra/terraform/**'
       - '.github/workflows/iac.yml'
   
+  # PR validation (plans against dev)
+  pull_request:
+    branches: [dev]
+    paths:
+      - 'infra/terraform/**'
+      - '.github/workflows/iac.yml'
+  
+  # Manual trigger
   workflow_dispatch:
     inputs:
+      environment:
+        description: 'Environment to deploy'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - stg
+          - prd
       action:
         description: 'Action to perform'
         required: true
@@ -54,11 +76,12 @@ on:
           - apply
 
 concurrency:
-  group: iac-dev-${{ github.ref }}
+  group: iac-${{ github.event.inputs.environment || github.ref_name }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   TOFU_VERSION: '1.6.0'
+  WORKING_DIR: 'infra/terraform'
   ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
   ARM_CLIENT_SECRET: ${{ secrets.ARM_CLIENT_SECRET }}
   ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
@@ -69,6 +92,34 @@ env:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 jobs:
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Determine Environment
+  # ─────────────────────────────────────────────────────────────────────────────
+  setup:
+    name: Setup
+    runs-on: ubuntu-latest
+    outputs:
+      environment: ${{ steps.set-env.outputs.environment }}
+    
+    steps:
+      - name: Determine Environment
+        id: set-env
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            ENV="${{ github.event.inputs.environment }}"
+          elif [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            ENV="dev"
+          else
+            BRANCH="${{ github.ref_name }}"
+            # Map branch to environment (feature branches default to dev)
+            case "$BRANCH" in
+              dev|stg|prd) ENV="$BRANCH" ;;
+              *)           ENV="dev" ;;  # Feature branches use dev environment
+            esac
+          fi
+          echo "environment=$ENV" >> $GITHUB_OUTPUT
+          echo "🎯 Target environment: $ENV"
+
   # ─────────────────────────────────────────────────────────────────────────────
   # Detect Changed Modules
   # ─────────────────────────────────────────────────────────────────────────────
@@ -102,15 +153,16 @@ jobs:
           echo "Comparing $BASE_SHA to HEAD"
           
           # Find changed module directories
-          CHANGED_MODULES=$(git diff --name-only "$BASE_SHA" HEAD -- 'modules/' 2>/dev/null | \
-            grep '^modules/' | \
-            cut -d'/' -f2 | \
+          CHANGED_MODULES=$(git diff --name-only "$BASE_SHA" HEAD -- 'infra/terraform/modules/' 2>/dev/null | \
+            grep '^infra/terraform/modules/' | \
+            cut -d'/' -f4 | \
             sort -u | \
             jq -R -s -c 'split("\n") | map(select(length > 0))' || echo '[]')
           
           # Check if root module files changed
           STACK_CHANGED=$(git diff --name-only "$BASE_SHA" HEAD -- \
-            'main.tf' 'variables.tf' 'outputs.tf' 'providers.tf' 'environments/' 2>/dev/null | wc -l)
+            'infra/terraform/main.tf' 'infra/terraform/variables.tf' 'infra/terraform/outputs.tf' \
+            'infra/terraform/providers.tf' 'infra/terraform/environments/' 2>/dev/null | wc -l)
           
           echo "Changed modules: $CHANGED_MODULES"
           echo "Stack files changed: $STACK_CHANGED"
@@ -146,12 +198,15 @@ jobs:
           tofu_version: ${{ env.TOFU_VERSION }}
 
       - name: Format Check
+        working-directory: ${{ env.WORKING_DIR }}
         run: tofu fmt -check -recursive -diff
 
       - name: Initialize (validation only)
+        working-directory: ${{ env.WORKING_DIR }}
         run: tofu init -backend=false
 
       - name: Validate
+        working-directory: ${{ env.WORKING_DIR }}
         run: tofu validate
 
   # ─────────────────────────────────────────────────────────────────────────────
@@ -163,7 +218,7 @@ jobs:
     needs: [detect-changes, validate]
     if: |
       github.event_name == 'push' && 
-      github.ref == 'refs/heads/main' &&
+      github.ref_name == 'dev' &&
       needs.detect-changes.outputs.any_module_changed == 'true' &&
       needs.validate.result == 'success'
     
@@ -222,7 +277,7 @@ jobs:
               PATCH=$(echo "$VERSION" | cut -d. -f3)
               
               # Get commits affecting this module since last tag
-              COMMITS=$(git log --oneline "$LATEST_TAG"..HEAD -- "modules/$module" 2>/dev/null || echo "")
+              COMMITS=$(git log --oneline "$LATEST_TAG"..HEAD -- "infra/terraform/modules/$module" 2>/dev/null || echo "")
               
               if [[ -z "$COMMITS" ]]; then
                 echo "No commits found for $module since $LATEST_TAG, skipping"
@@ -247,7 +302,7 @@ jobs:
             NEW_TAG="${TAG_PREFIX}/${NEW_VERSION}"
             
             # Generate changelog for tag message
-            CHANGELOG=$(git log --pretty=format:"- %s (%h)" "$COMPARE_REF"..HEAD -- "modules/$module" 2>/dev/null | head -20)
+            CHANGELOG=$(git log --pretty=format:"- %s (%h)" "$COMPARE_REF"..HEAD -- "infra/terraform/modules/$module" 2>/dev/null | head -20)
             
             TAG_MESSAGE="Release $module $NEW_VERSION
 
@@ -280,18 +335,19 @@ jobs:
           echo "Use these tags in your root module:" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`hcl" >> $GITHUB_STEP_SUMMARY
           echo "module \"azurerm-aks\" {" >> $GITHUB_STEP_SUMMARY
-          echo "  source = \"git::https://github.com/${{ github.repository }}.git//modules/azurerm-aks-tf?ref=infra/aks/vX.Y.Z\"" >> $GITHUB_STEP_SUMMARY
+          echo "  source = \"git::https://github.com/${{ github.repository }}.git//infra/terraform/modules/azurerm-aks-tf?ref=infra/aks/vX.Y.Z\"" >> $GITHUB_STEP_SUMMARY
           echo "}" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
 
   # ─────────────────────────────────────────────────────────────────────────────
-  # Plan Infrastructure (Dev Only)
+  # Plan Infrastructure
   # ─────────────────────────────────────────────────────────────────────────────
   plan:
-    name: Plan [dev]
+    name: Plan [${{ needs.setup.outputs.environment }}]
     runs-on: ubuntu-latest
-    needs: [validate]
+    needs: [setup, validate]
     if: needs.validate.result == 'success'
+    environment: ${{ needs.setup.outputs.environment }}
     
     permissions:
       contents: read
@@ -309,22 +365,29 @@ jobs:
           tofu_version: ${{ env.TOFU_VERSION }}
 
       - name: Initialize OpenTofu
+        working-directory: ${{ env.WORKING_DIR }}
         env:
           ARM_ACCESS_KEY: ${{ secrets.STATE_ACCESS_KEY }}
         run: |
+          ENV="${{ needs.setup.outputs.environment }}"
+          echo "Initializing for environment: $ENV"
           tofu init \
-            -backend-config="storage_account_name=stiacstatedev" \
+            -backend-config="resource_group_name=iac" \
+            -backend-config="storage_account_name=stiacstate${ENV}" \
             -backend-config="container_name=tfstate" \
-            -backend-config="key=dev/terraform.tfstate"
+            -backend-config="key=${ENV}/terraform.tfstate"
 
       - name: Plan OpenTofu
         id: plan
+        working-directory: ${{ env.WORKING_DIR }}
         continue-on-error: true
         run: |
           set +e
+          ENV="${{ needs.setup.outputs.environment }}"
+          
           tofu plan \
-            -var-file="environments/dev.tfvars" \
-            -out=tfplan-dev \
+            -var-file="environments/${ENV}.tfvars" \
+            -out=tfplan-${ENV} \
             -detailed-exitcode \
             -no-color 2>&1 | tee plan-output.txt
           
@@ -338,17 +401,20 @@ jobs:
 
       - name: Display Plan Output
         run: |
-          echo "## OpenTofu Plan Output" >> $GITHUB_STEP_SUMMARY
+          ENV="${{ needs.setup.outputs.environment }}"
+          echo "## OpenTofu Plan Output [$ENV]" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
-          cat plan-output.txt >> $GITHUB_STEP_SUMMARY || true
+          cat ${{ env.WORKING_DIR }}/plan-output.txt >> $GITHUB_STEP_SUMMARY || true
           echo '```' >> $GITHUB_STEP_SUMMARY
 
       - name: Create plan metadata
+        working-directory: ${{ env.WORKING_DIR }}
         run: |
-          cat > tfplan-dev.meta.json << EOF
+          ENV="${{ needs.setup.outputs.environment }}"
+          cat > tfplan-${ENV}.meta.json << EOF
           {
             "commit_sha": "${{ github.sha }}",
-            "environment": "dev",
+            "environment": "${ENV}",
             "created_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
             "created_by": "${{ github.actor }}",
             "workflow_run_id": "${{ github.run_id }}",
@@ -359,11 +425,11 @@ jobs:
       - name: Upload Plan Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: tfplan-dev-${{ github.run_id }}
+          name: tfplan-${{ needs.setup.outputs.environment }}-${{ github.run_id }}
           path: |
-            tfplan-dev
-            tfplan-dev.meta.json
-            plan-output.txt
+            ${{ env.WORKING_DIR }}/tfplan-${{ needs.setup.outputs.environment }}
+            ${{ env.WORKING_DIR }}/tfplan-${{ needs.setup.outputs.environment }}.meta.json
+            ${{ env.WORKING_DIR }}/plan-output.txt
           retention-days: 7
 
       - name: Comment Plan on PR
@@ -372,7 +438,8 @@ jobs:
         with:
           script: |
             const fs = require('fs');
-            const planOutput = fs.readFileSync('plan-output.txt', 'utf8');
+            const env = '${{ needs.setup.outputs.environment }}';
+            const planOutput = fs.readFileSync('${{ env.WORKING_DIR }}/plan-output.txt', 'utf8');
             const exitCode = '${{ steps.plan.outputs.exitcode }}';
             
             let status = '✅ No changes';
@@ -383,7 +450,7 @@ jobs:
               ? planOutput.substring(0, 60000) + '\n\n... (truncated)'
               : planOutput;
             
-            const body = `## OpenTofu Plan: \`dev\` ${status}
+            const body = `## OpenTofu Plan: \`${env}\` ${status}
             
             <details>
             <summary>Click to expand plan output</summary>
@@ -406,7 +473,7 @@ jobs:
             
             const botComment = comments.find(c => 
               c.user.login === 'github-actions[bot]' && 
-              c.body.includes(`OpenTofu Plan: \`dev\``)
+              c.body.includes('OpenTofu Plan:')
             );
             
             if (botComment) {
@@ -426,18 +493,19 @@ jobs:
             }
 
   # ─────────────────────────────────────────────────────────────────────────────
-  # Apply Infrastructure (Manual Dispatch or Commit Message Trigger)
+  # Apply Infrastructure
   # ─────────────────────────────────────────────────────────────────────────────
   apply:
-    name: Apply [dev]
+    name: Apply [${{ needs.setup.outputs.environment }}]
     runs-on: ubuntu-latest
-    needs: plan
+    needs: [setup, plan]
     if: |
-      (github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'apply') ||
-      (github.event_name == 'push' && github.ref == 'refs/heads/main' && contains(github.event.head_commit.message, '[tfapply]'))
+      needs.plan.result == 'success' &&
+      ((github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'apply') ||
+       (github.event_name == 'push' && contains(github.event.head_commit.message, '[tfapply]')))
     
     environment: 
-      name: dev-apply
+      name: ${{ needs.setup.outputs.environment }}
       url: https://portal.azure.com
     
     steps:
@@ -451,17 +519,20 @@ jobs:
       - name: Download Plan
         uses: actions/download-artifact@v4
         with:
-          name: tfplan-dev-${{ github.run_id }}
-          path: .
+          name: tfplan-${{ needs.setup.outputs.environment }}-${{ github.run_id }}
+          path: ${{ env.WORKING_DIR }}
 
       - name: Verify Plan Freshness
+        working-directory: ${{ env.WORKING_DIR }}
         run: |
-          if [[ ! -f "tfplan-dev.meta.json" ]]; then
+          ENV="${{ needs.setup.outputs.environment }}"
+          
+          if [[ ! -f "tfplan-${ENV}.meta.json" ]]; then
             echo "❌ Plan metadata not found."
             exit 1
           fi
           
-          PLAN_SHA=$(jq -r '.commit_sha' "tfplan-dev.meta.json")
+          PLAN_SHA=$(jq -r '.commit_sha' "tfplan-${ENV}.meta.json")
           
           echo "Plan commit: $PLAN_SHA"
           echo "Current commit: ${{ github.sha }}"
@@ -474,24 +545,30 @@ jobs:
           echo "✅ Plan is fresh"
 
       - name: Initialize OpenTofu
+        working-directory: ${{ env.WORKING_DIR }}
         env:
           ARM_ACCESS_KEY: ${{ secrets.STATE_ACCESS_KEY }}
         run: |
+          ENV="${{ needs.setup.outputs.environment }}"
           tofu init \
-            -backend-config="storage_account_name=stiacstatedev" \
+            -backend-config="resource_group_name=iac" \
+            -backend-config="storage_account_name=stiacstate${ENV}" \
             -backend-config="container_name=tfstate" \
-            -backend-config="key=dev/terraform.tfstate"
+            -backend-config="key=${ENV}/terraform.tfstate"
 
       - name: Apply OpenTofu
+        working-directory: ${{ env.WORKING_DIR }}
         run: |
-          echo "🚀 Applying infrastructure changes to dev..."
-          tofu apply -auto-approve tfplan-dev
+          ENV="${{ needs.setup.outputs.environment }}"
+          echo "🚀 Applying infrastructure changes to ${ENV}..."
+          tofu apply -auto-approve tfplan-${ENV}
 
       - name: Summary
         run: |
+          ENV="${{ needs.setup.outputs.environment }}"
           echo "## ✅ Apply Completed" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "- **Environment:** dev" >> $GITHUB_STEP_SUMMARY
+          echo "- **Environment:** ${ENV}" >> $GITHUB_STEP_SUMMARY
           echo "- **Commit:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Applied by:** ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
 
@@ -501,13 +578,14 @@ jobs:
   quality-gate:
     name: Quality Gate
     runs-on: ubuntu-latest
-    needs: [validate, plan]
+    needs: [setup, validate, plan]
     if: always()
 
     steps:
       - name: Evaluate Results
         run: |
-          echo "## IaC Quality Gate Results" >> $GITHUB_STEP_SUMMARY
+          ENV="${{ needs.setup.outputs.environment }}"
+          echo "## IaC Quality Gate Results [$ENV]" >> $GITHUB_STEP_SUMMARY
           
           FAILED=false
           

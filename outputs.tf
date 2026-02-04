@@ -131,3 +131,17 @@ output "workload_identity_federated_credentials" {
   description = "Map of federated credential details for Kubernetes service accounts"
   value       = module.azurerm-aks.workload_identity_federated_credentials
 }
+
+# -----------------------------------------------------------------------------
+# Identity Outputs
+# -----------------------------------------------------------------------------
+
+output "aks_control_plane_identity_client_id" {
+  description = "The Client ID of the AKS control plane managed identity"
+  value       = module.azurerm-aks.aks_control_plane_identity_client_id
+}
+
+output "key_vault_secrets_provider_identity_client_id" {
+  description = "The Client ID of the Key Vault Secrets Provider identity"
+  value       = module.azurerm-aks.key_vault_secrets_provider_identity_client_id
+}

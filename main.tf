@@ -2,7 +2,7 @@
 # Terraform Remote Backend Configuration
 # ------------------------------------------------------------------------------
 # Backend is partially configured here. The following values are passed
-# during `terraform init` via -backend-config flags:
+# during `tofu init` via -backend-config flags:
 #   - storage_account_name: Azure Storage Account for state
 #   - container_name: Container within storage account
 #   - key: Path to state file (environment/terraform.tfstate)
@@ -91,3 +91,17 @@ module "azurerm-aks" {
   azure_rbac_enabled     = var.azure_rbac_enabled
 }
 
+# ------------------------------------------------------------------------------
+# Future modules (uncomment when ready)
+# ------------------------------------------------------------------------------
+# module "postgres" {
+#   source = "./modules/helm-postgres-tf"
+#   aks_cluster_name = local.aks_cluster_name
+#   depends_on = [module.azurerm-aks]
+# }
+
+# module "kafka" {
+#   source = "./modules/helm-kafka-tf"
+#   aks_cluster_name = local.aks_cluster_name
+#   depends_on = [module.azurerm-aks]
+# }
