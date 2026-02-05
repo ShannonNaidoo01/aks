@@ -540,38 +540,37 @@ jobs:
               ? planOutput.substring(0, 50000) + '\n\n... (truncated)'
               : planOutput;
             
-            const table = [
-              '| Action | Count |',
-              '|--------|-------|',
-              `| 🟢 Add | ${adds} |`,
-              `| 🟡 Change | ${changes} |`,
-              `| 🔴 Destroy | ${destroys} |`
-            ].join('\n');
-            
-            const resourceSection = summaryTable ? `### 📊 Resources\n\n${summaryTable}\n` : '';
-            
-            const body = `## 🏗️ OpenTofu Plan: \`${env}\` ${status}
-
-### 📈 Change Summary
-
-${table}
-
-${resourceSection}
-
-<details>
-<summary>📜 Full Plan Output (click to expand)</summary>
-
-\`\`\`hcl
-${truncated}
-\`\`\`
-
-</details>
-
----
-📝 *Commit:* \`${{ github.sha }}\`
-🔗 *Workflow:* [Run #${{ github.run_id }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
-🎯 *Environment:* \`${env}\`
-`;
+            const bodyParts = [];
+            bodyParts.push('## 🏗️ OpenTofu Plan: `' + env + '` ' + status);
+            bodyParts.push('');
+            bodyParts.push('### 📈 Change Summary');
+            bodyParts.push('');
+            bodyParts.push('| Action | Count |');
+            bodyParts.push('|--------|-------|');
+            bodyParts.push('| 🟢 Add | ' + adds + ' |');
+            bodyParts.push('| 🟡 Change | ' + changes + ' |');
+            bodyParts.push('| 🔴 Destroy | ' + destroys + ' |');
+            bodyParts.push('');
+            if (summaryTable) {
+              bodyParts.push('### 📊 Resources');
+              bodyParts.push('');
+              bodyParts.push(summaryTable);
+              bodyParts.push('');
+            }
+            bodyParts.push('<details>');
+            bodyParts.push('<summary>📜 Full Plan Output (click to expand)</summary>');
+            bodyParts.push('');
+            bodyParts.push('```hcl');
+            bodyParts.push(truncated);
+            bodyParts.push('```');
+            bodyParts.push('');
+            bodyParts.push('</details>');
+            bodyParts.push('');
+            bodyParts.push('---');
+            bodyParts.push('📝 *Commit:* `${{ github.sha }}`');
+            bodyParts.push('🔗 *Workflow:* [Run #${{ github.run_id }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})');
+            bodyParts.push('🎯 *Environment:* `' + env + '`');
+            const body = bodyParts.join('\n');
             
             const { data: comments } = await github.rest.issues.listComments({
               owner: context.repo.owner,
