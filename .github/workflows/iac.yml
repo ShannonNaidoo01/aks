@@ -540,17 +540,23 @@ jobs:
               ? planOutput.substring(0, 50000) + '\n\n... (truncated)'
               : planOutput;
             
+            const table = [
+              '| Action | Count |',
+              '|--------|-------|',
+              `| 🟢 Add | ${adds} |`,
+              `| 🟡 Change | ${changes} |`,
+              `| 🔴 Destroy | ${destroys} |`
+            ].join('\n');
+            
+            const resourceSection = summaryTable ? `### 📊 Resources\n\n${summaryTable}\n` : '';
+            
             const body = `## 🏗️ OpenTofu Plan: \`${env}\` ${status}
 
 ### 📈 Change Summary
 
-| Action | Count |
-|--------|-------|
-| 🟢 Add | ${adds} |
-| 🟡 Change | ${changes} |
-| 🔴 Destroy | ${destroys} |
+${table}
 
-${summaryTable ? `### 📊 Resources\n\n${summaryTable}\n` : ''}
+${resourceSection}
 
 <details>
 <summary>📜 Full Plan Output (click to expand)</summary>
