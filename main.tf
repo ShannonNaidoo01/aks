@@ -106,14 +106,6 @@ module "cert_manager" {
   create_self_signed_issuer  = true
   create_letsencrypt_issuers = var.letsencrypt_email != ""
 
-  # Pass providers explicitly
-  providers = {
-    kubernetes = kubernetes
-    helm       = helm
-    kubectl    = kubectl
-    time       = time
-  }
-
   depends_on = [module.azurerm-aks]
 }
 

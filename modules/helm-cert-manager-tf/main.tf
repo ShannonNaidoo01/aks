@@ -5,6 +5,16 @@
 # automated TLS certificate management.
 # -----------------------------------------------------------------------------
 
+# Provider sources must be declared in modules for non-hashicorp providers
+# This is a Terraform/OpenTofu requirement - configurations come from root
+terraform {
+  required_providers {
+    kubectl = {
+      source = "gavinbunney/kubectl"
+    }
+  }
+}
+
 # -----------------------------------------------------------------------------
 # Namespace
 # -----------------------------------------------------------------------------
