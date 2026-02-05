@@ -382,6 +382,11 @@ jobs:
             -backend-config="container_name=tfstate" \
             -backend-config="key=${ENV}/terraform.tfstate"
 
+      - name: Install tf-summarize
+        run: |
+          curl -sSL https://github.com/dineshba/tf-summarize/releases/download/v0.3.10/tf-summarize_linux_amd64.tar.gz | tar xz
+          sudo mv tf-summarize /usr/local/bin/
+
       - name: Plan OpenTofu
         id: plan
         working-directory: ${{ env.WORKING_DIR }}
@@ -399,18 +404,68 @@ jobs:
           EXIT_CODE=$?
           echo "exitcode=$EXIT_CODE" >> $GITHUB_OUTPUT
           
+          # Generate JSON plan for tf-summarize
+          if [[ $EXIT_CODE -ne 1 ]]; then
+            tofu show -json tfplan-${ENV} > tfplan-${ENV}.json 2>/dev/null || true
+          fi
+          
           if [[ $EXIT_CODE -eq 1 ]]; then
             echo "❌ Plan failed"
             exit 1
           fi
 
-      - name: Display Plan Output
+      - name: Generate Plan Summary
+        if: always()
+        working-directory: ${{ env.WORKING_DIR }}
         run: |
           ENV="${{ needs.setup.outputs.environment }}"
-          echo "## OpenTofu Plan Output [$ENV]" >> $GITHUB_STEP_SUMMARY
+          EXIT_CODE="${{ steps.plan.outputs.exitcode }}"
+          
+          # Status emoji and message
+          if [[ "$EXIT_CODE" == "0" ]]; then
+            STATUS="✅ No Changes"
+            EMOJI="white_check_mark"
+          elif [[ "$EXIT_CODE" == "2" ]]; then
+            STATUS="⚠️ Changes Detected"
+            EMOJI="warning"
+          else
+            STATUS="❌ Plan Failed"
+            EMOJI="x"
+          fi
+          
+          echo "## 🏗️ OpenTofu Plan: \`${ENV}\` - ${STATUS}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Add tf-summarize output if plan succeeded
+          if [[ -f "tfplan-${ENV}.json" ]]; then
+            echo "### 📊 Resource Summary" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            tf-summarize -md tfplan-${ENV}.json >> $GITHUB_STEP_SUMMARY 2>/dev/null || true
+            echo "" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          # Extract key metrics from plan output
+          ADDS=$(grep -oP 'Plan: \K\d+(?= to add)' plan-output.txt 2>/dev/null || echo "0")
+          CHANGES=$(grep -oP ', \K\d+(?= to change)' plan-output.txt 2>/dev/null || echo "0")
+          DESTROYS=$(grep -oP ', \K\d+(?= to destroy)' plan-output.txt 2>/dev/null || echo "0")
+          
+          echo "### 📈 Change Metrics" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Action | Count |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| 🟢 Add | ${ADDS} |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🟡 Change | ${CHANGES} |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🔴 Destroy | ${DESTROYS} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Full plan in collapsible section
+          echo "<details>" >> $GITHUB_STEP_SUMMARY
+          echo "<summary>📜 Full Plan Output (click to expand)</summary>" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo '```hcl' >> $GITHUB_STEP_SUMMARY
+          cat plan-output.txt >> $GITHUB_STEP_SUMMARY || true
           echo '```' >> $GITHUB_STEP_SUMMARY
-          cat ${{ env.WORKING_DIR }}/plan-output.txt >> $GITHUB_STEP_SUMMARY || true
-          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "</details>" >> $GITHUB_STEP_SUMMARY
 
       - name: Create plan metadata
         working-directory: ${{ env.WORKING_DIR }}
@@ -433,42 +488,84 @@ jobs:
           name: tfplan-${{ needs.setup.outputs.environment }}-${{ github.run_id }}
           path: |
             ${{ env.WORKING_DIR }}/tfplan-${{ needs.setup.outputs.environment }}
+            ${{ env.WORKING_DIR }}/tfplan-${{ needs.setup.outputs.environment }}.json
             ${{ env.WORKING_DIR }}/tfplan-${{ needs.setup.outputs.environment }}.meta.json
             ${{ env.WORKING_DIR }}/plan-output.txt
           retention-days: 7
 
       - name: Comment Plan on PR
         if: github.event_name == 'pull_request'
+        working-directory: ${{ env.WORKING_DIR }}
         uses: actions/github-script@v7
         with:
           script: |
             const fs = require('fs');
             const env = '${{ needs.setup.outputs.environment }}';
-            const planOutput = fs.readFileSync('${{ env.WORKING_DIR }}/plan-output.txt', 'utf8');
             const exitCode = '${{ steps.plan.outputs.exitcode }}';
             
-            let status = '✅ No changes';
-            if (exitCode === '2') status = '⚠️ Changes detected';
-            if (exitCode === '1') status = '❌ Plan failed';
+            // Read plan output
+            let planOutput = '';
+            try {
+              planOutput = fs.readFileSync('plan-output.txt', 'utf8');
+            } catch (e) {
+              planOutput = 'Unable to read plan output';
+            }
             
-            const truncated = planOutput.length > 60000 
-              ? planOutput.substring(0, 60000) + '\n\n... (truncated)'
+            // Read tf-summarize output if available
+            let summaryTable = '';
+            try {
+              const { execSync } = require('child_process');
+              summaryTable = execSync(`tf-summarize -md tfplan-${env}.json 2>/dev/null || echo ""`).toString();
+            } catch (e) {
+              summaryTable = '';
+            }
+            
+            // Extract metrics
+            const addMatch = planOutput.match(/Plan: (\d+) to add/);
+            const changeMatch = planOutput.match(/(\d+) to change/);
+            const destroyMatch = planOutput.match(/(\d+) to destroy/);
+            
+            const adds = addMatch ? addMatch[1] : '0';
+            const changes = changeMatch ? changeMatch[1] : '0';
+            const destroys = destroyMatch ? destroyMatch[1] : '0';
+            
+            // Status
+            let status = '✅ No Changes';
+            let statusIcon = '✅';
+            if (exitCode === '2') { status = '⚠️ Changes Detected'; statusIcon = '⚠️'; }
+            if (exitCode === '1') { status = '❌ Plan Failed'; statusIcon = '❌'; }
+            
+            // Truncate if needed
+            const truncated = planOutput.length > 50000 
+              ? planOutput.substring(0, 50000) + '\n\n... (truncated)'
               : planOutput;
             
-            const body = `## OpenTofu Plan: \`${env}\` ${status}
-            
-            <details>
-            <summary>Click to expand plan output</summary>
-            
-            \`\`\`hcl
-            ${truncated}
-            \`\`\`
-            
-            </details>
-            
-            *Commit: ${{ github.sha }}*
-            *Workflow: [Run #${{ github.run_id }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})*
-            `;
+            const body = `## 🏗️ OpenTofu Plan: \`${env}\` ${status}
+
+### 📈 Change Summary
+
+| Action | Count |
+|--------|-------|
+| 🟢 Add | ${adds} |
+| 🟡 Change | ${changes} |
+| 🔴 Destroy | ${destroys} |
+
+${summaryTable ? `### 📊 Resources\n\n${summaryTable}\n` : ''}
+
+<details>
+<summary>📜 Full Plan Output (click to expand)</summary>
+
+\`\`\`hcl
+${truncated}
+\`\`\`
+
+</details>
+
+---
+📝 *Commit:* \`${{ github.sha }}\`
+🔗 *Workflow:* [Run #${{ github.run_id }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+🎯 *Environment:* \`${env}\`
+`;
             
             const { data: comments } = await github.rest.issues.listComments({
               owner: context.repo.owner,
