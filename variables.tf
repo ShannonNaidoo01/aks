@@ -201,3 +201,25 @@ variable "azure_rbac_enabled" {
   type        = bool
   default     = true
 }
+
+# -----------------------------------------------------------------------------
+# Cert-Manager Variables
+# -----------------------------------------------------------------------------
+
+variable "enable_cert_manager" {
+  description = "Enable cert-manager deployment"
+  type        = bool
+  default     = true
+}
+
+variable "cert_manager_version" {
+  description = "Cert-manager Helm chart version"
+  type        = string
+  default     = "v1.14.3"
+}
+
+variable "letsencrypt_email" {
+  description = "Email for Let's Encrypt certificate notifications"
+  type        = string
+  default     = ""
+}

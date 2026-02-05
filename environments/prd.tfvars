@@ -1,27 +1,28 @@
 # ═══════════════════════════════════════════════════════════════════════════════
-# Development Environment Configuration
+# Production Environment Configuration
 # ═══════════════════════════════════════════════════════════════════════════════
 
-environment        = "dev"
+environment        = "prd"
 location           = "uksouth"
 kubernetes_version = "1.32"
 
 tags = {
   project     = "tune-exchange"
-  cost_center = "development"
+  cost_center = "production"
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
-# AKS Cluster (Free tier for dev, use Standard for production)
+# AKS Cluster (Standard tier for production SLA)
 # ─────────────────────────────────────────────────────────────────────────────
 
-aks_sku_tier = "Free"
+aks_sku_tier = "Standard"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Node Pools
 # ─────────────────────────────────────────────────────────────────────────────
 
-# System node pools - B2s for dev (quota friendly)
+# System node pool - B2s for production (quota friendly)
+# TODO: Upgrade to D-series VMs after requesting quota increase
 system_node_pool = {
   vm_size             = "Standard_B2s"
   node_count          = 1
@@ -31,14 +32,15 @@ system_node_pool = {
   zones               = [] # B-series doesn't support zones
 }
 
-# No additional node pools for dev (keep costs low, avoid quota issues)
+# No additional node pools (quota constraints)
+# TODO: Add workload pools after requesting quota increase
 node_pools = {}
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Storage (LRS for dev, use ZRS for production)
+# Storage (ZRS for production - zone redundant)
 # ─────────────────────────────────────────────────────────────────────────────
 
-storage_account_replication_type = "LRS"
+storage_account_replication_type = "ZRS"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Workload Identities (none for initial deployment)

@@ -96,6 +96,30 @@ output "kube_config_host" {
   sensitive   = true
 }
 
+output "aks_host" {
+  description = "Kubernetes API server host (for provider config)"
+  value       = azurerm_kubernetes_cluster.aks.kube_config[0].host
+  sensitive   = true
+}
+
+output "aks_client_certificate" {
+  description = "Base64 encoded client certificate"
+  value       = azurerm_kubernetes_cluster.aks.kube_config[0].client_certificate
+  sensitive   = true
+}
+
+output "aks_client_key" {
+  description = "Base64 encoded client key"
+  value       = azurerm_kubernetes_cluster.aks.kube_config[0].client_key
+  sensitive   = true
+}
+
+output "aks_cluster_ca_certificate" {
+  description = "Base64 encoded cluster CA certificate"
+  value       = azurerm_kubernetes_cluster.aks.kube_config[0].cluster_ca_certificate
+  sensitive   = true
+}
+
 # -----------------------------------------------------------------------------
 # Key Vault Secrets Provider Outputs
 # -----------------------------------------------------------------------------

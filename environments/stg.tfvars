@@ -1,27 +1,27 @@
 # ═══════════════════════════════════════════════════════════════════════════════
-# Development Environment Configuration
+# Staging Environment Configuration
 # ═══════════════════════════════════════════════════════════════════════════════
 
-environment        = "dev"
+environment        = "stg"
 location           = "uksouth"
 kubernetes_version = "1.32"
 
 tags = {
   project     = "tune-exchange"
-  cost_center = "development"
+  cost_center = "staging"
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
-# AKS Cluster (Free tier for dev, use Standard for production)
+# AKS Cluster (Standard tier for staging - mirrors production)
 # ─────────────────────────────────────────────────────────────────────────────
 
-aks_sku_tier = "Free"
+aks_sku_tier = "Standard"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Node Pools
 # ─────────────────────────────────────────────────────────────────────────────
 
-# System node pools - B2s for dev (quota friendly)
+# System node pool - B2s for staging (quota friendly)
 system_node_pool = {
   vm_size             = "Standard_B2s"
   node_count          = 1
@@ -31,14 +31,14 @@ system_node_pool = {
   zones               = [] # B-series doesn't support zones
 }
 
-# No additional node pools for dev (keep costs low, avoid quota issues)
+# No additional node pools (quota constraints)
 node_pools = {}
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Storage (LRS for dev, use ZRS for production)
+# Storage (ZRS for staging - mirrors production)
 # ─────────────────────────────────────────────────────────────────────────────
 
-storage_account_replication_type = "LRS"
+storage_account_replication_type = "ZRS"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Workload Identities (none for initial deployment)

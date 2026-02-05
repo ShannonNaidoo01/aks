@@ -145,3 +145,21 @@ output "key_vault_secrets_provider_identity_client_id" {
   description = "The Client ID of the Key Vault Secrets Provider identity"
   value       = module.azurerm-aks.key_vault_secrets_provider_identity_client_id
 }
+
+# -----------------------------------------------------------------------------
+# Cert-Manager Outputs
+# -----------------------------------------------------------------------------
+
+output "cert_manager_namespace" {
+  description = "The namespace where cert-manager is installed"
+  value       = var.enable_cert_manager ? module.cert_manager[0].namespace : null
+}
+
+output "cert_manager_issuers" {
+  description = "Available ClusterIssuers for certificate generation"
+  value = var.enable_cert_manager ? {
+    self_signed         = module.cert_manager[0].self_signed_issuer_name
+    letsencrypt_staging = module.cert_manager[0].letsencrypt_staging_issuer_name
+    letsencrypt_prod    = module.cert_manager[0].letsencrypt_prod_issuer_name
+  } : null
+}

@@ -92,6 +92,24 @@ module "azurerm-aks" {
 }
 
 # ------------------------------------------------------------------------------
+# Cert-Manager Module
+# ------------------------------------------------------------------------------
+module "cert_manager" {
+  source = "./modules/helm-cert-manager-tf"
+  count  = var.enable_cert_manager ? 1 : 0
+
+  chart_version      = var.cert_manager_version
+  letsencrypt_email  = var.letsencrypt_email
+  ingress_class      = "nginx"
+
+  # Create issuers
+  create_self_signed_issuer  = true
+  create_letsencrypt_issuers = var.letsencrypt_email != ""
+
+  depends_on = [module.azurerm-aks]
+}
+
+# ------------------------------------------------------------------------------
 # Future modules (uncomment when ready)
 # ------------------------------------------------------------------------------
 # module "postgres" {
