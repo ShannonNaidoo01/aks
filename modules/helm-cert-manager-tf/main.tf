@@ -8,7 +8,7 @@
 # -----------------------------------------------------------------------------
 # Namespace
 # -----------------------------------------------------------------------------
-resource "kubernetes_namespace" "cert_manager" {
+resource "kubernetes_namespace_v1" "cert_manager" {
   metadata {
     name = var.namespace
 
@@ -27,7 +27,7 @@ resource "helm_release" "cert_manager" {
   repository = "https://charts.jetstack.io"
   chart      = "cert-manager"
   version    = var.chart_version
-  namespace  = kubernetes_namespace.cert_manager.metadata[0].name
+  namespace  = kubernetes_namespace_v1.cert_manager.metadata[0].name
 
   # Install CRDs - required for cert-manager to function
   set {
@@ -100,7 +100,7 @@ resource "helm_release" "cert_manager" {
 
   timeout = var.helm_timeout
 
-  depends_on = [kubernetes_namespace.cert_manager]
+  depends_on = [kubernetes_namespace_v1.cert_manager]
 }
 
 # -----------------------------------------------------------------------------

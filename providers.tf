@@ -33,7 +33,7 @@ provider "random" {}
 
 # Helm provider configured to use AKS cluster
 provider "helm" {
-  kubernetes {
+  kubernetes = {
     host                   = module.azurerm-aks.aks_host
     client_certificate     = base64decode(module.azurerm-aks.aks_client_certificate)
     client_key             = base64decode(module.azurerm-aks.aks_client_key)
