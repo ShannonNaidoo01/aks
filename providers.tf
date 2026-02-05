@@ -18,6 +18,14 @@ terraform {
       source  = "hashicorp/kubernetes"
       version = ">= 2.25.0"
     }
+    kubectl = {
+      source  = "gavinbunney/kubectl"
+      version = ">= 1.14.0"
+    }
+    time = {
+      source  = "hashicorp/time"
+      version = ">= 0.10.0"
+    }
   }
 }
 
@@ -47,4 +55,13 @@ provider "kubernetes" {
   client_certificate     = base64decode(module.azurerm-aks.aks_client_certificate)
   client_key             = base64decode(module.azurerm-aks.aks_client_key)
   cluster_ca_certificate = base64decode(module.azurerm-aks.aks_cluster_ca_certificate)
+}
+
+# Kubectl provider for applying raw manifests
+provider "kubectl" {
+  host                   = module.azurerm-aks.aks_host
+  client_certificate     = base64decode(module.azurerm-aks.aks_client_certificate)
+  client_key             = base64decode(module.azurerm-aks.aks_client_key)
+  cluster_ca_certificate = base64decode(module.azurerm-aks.aks_cluster_ca_certificate)
+  load_config_file       = false
 }
