@@ -30,73 +30,46 @@ resource "helm_release" "cert_manager" {
   namespace  = kubernetes_namespace_v1.cert_manager.metadata[0].name
 
   # Install CRDs - required for cert-manager to function
-  set {
-    name  = "installCRDs"
-    value = "true"
-  }
+  values = [yamlencode({
+    installCRDs = true
 
-  # Resource requests/limits
-  set {
-    name  = "resources.requests.cpu"
-    value = var.resources.requests.cpu
-  }
-
-  set {
-    name  = "resources.requests.memory"
-    value = var.resources.requests.memory
-  }
-
-  set {
-    name  = "resources.limits.cpu"
-    value = var.resources.limits.cpu
-  }
-
-  set {
-    name  = "resources.limits.memory"
-    value = var.resources.limits.memory
-  }
-
-  # Webhook resource configuration
-  set {
-    name  = "webhook.resources.requests.cpu"
-    value = "10m"
-  }
-
-  set {
-    name  = "webhook.resources.requests.memory"
-    value = "32Mi"
-  }
-
-  # CA Injector resource configuration
-  set {
-    name  = "cainjector.resources.requests.cpu"
-    value = "10m"
-  }
-
-  set {
-    name  = "cainjector.resources.requests.memory"
-    value = "32Mi"
-  }
-
-  # Enable Prometheus metrics
-  set {
-    name  = "prometheus.enabled"
-    value = var.enable_prometheus_metrics
-  }
-
-  # Pod labels
-  set {
-    name  = "podLabels.app\\.kubernetes\\.io/part-of"
-    value = "cert-manager"
-  }
-
-  dynamic "set" {
-    for_each = var.extra_values
-    content {
-      name  = set.key
-      value = set.value
+    resources = {
+      requests = {
+        cpu    = var.resources.requests.cpu
+        memory = var.resources.requests.memory
+      }
+      limits = {
+        cpu    = var.resources.limits.cpu
+        memory = var.resources.limits.memory
+      }
     }
-  }
+
+    webhook = {
+      resources = {
+        requests = {
+          cpu    = "10m"
+          memory = "32Mi"
+        }
+      }
+    }
+
+    cainjector = {
+      resources = {
+        requests = {
+          cpu    = "10m"
+          memory = "32Mi"
+        }
+      }
+    }
+
+    prometheus = {
+      enabled = var.enable_prometheus_metrics
+    }
+
+    podLabels = {
+      "app.kubernetes.io/part-of" = "cert-manager"
+    }
+  })]
 
   timeout = var.helm_timeout
 
