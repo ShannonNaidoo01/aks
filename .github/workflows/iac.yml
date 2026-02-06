@@ -169,8 +169,10 @@ jobs:
             BASE_SHA="${{ github.event.pull_request.base.sha }}"
           else
             BASE_SHA="${{ github.event.before }}"
+            # Handle first commit or force push
             if [[ "$BASE_SHA" == "0000000000000000000000000000000000000000" ]]; then
-              BASE_SHA=$(git rev-parse HEAD~1 2>/dev/null || echo "${{ github.sha }}")
+              # Try to get previous commit, fallback to empty tree for first commit
+              BASE_SHA=$(git rev-parse HEAD~1 2>/dev/null || git hash-object -t tree /dev/null)
             fi
           fi
           
@@ -191,8 +193,23 @@ jobs:
             CHANGED_STACKS="core postgres-svr"
           fi
           
+          # If still no stacks detected but stacks/ or modules/ exist, include all env-scope stacks
           if [[ -z "$CHANGED_STACKS" ]]; then
-            echo "No stacks changed"
+            # Check if this looks like a first-time setup (stacks exist but no changes detected)
+            if [[ -d "stacks/core" ]] || [[ -d "stacks/postgres-svr" ]]; then
+              echo "No specific changes detected, checking for new stacks..."
+              # List all env-scope stacks that exist
+              for stack in core postgres-svr; do
+                if [[ -d "stacks/$stack" ]]; then
+                  CHANGED_STACKS="$CHANGED_STACKS $stack"
+                fi
+              done
+              CHANGED_STACKS=$(echo "$CHANGED_STACKS" | xargs)
+            fi
+          fi
+          
+          if [[ -z "$CHANGED_STACKS" ]]; then
+            echo "No stacks to deploy"
             echo "stacks=[]" >> $GITHUB_OUTPUT
             echo "stacks_count=0" >> $GITHUB_OUTPUT
             exit 0
