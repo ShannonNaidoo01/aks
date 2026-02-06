@@ -91,7 +91,7 @@ stacks/
 | postgres-svr | `postgres-svr` | `{env}/terraform.tfstate` |
 | postgres-db | `postgres-db` | `{env}/{app}/terraform.tfstate` |
 
-Storage Account: `txstate{env}` (e.g., `txstatedev`, `txstatestg`, `txstateprd`)
+Storage Account: `stiacstate{env}` (e.g., `stiacstatedev`, `stiacstatestg`, `stiacstateprd`)
 
 ## PostgreSQL Architecture
 
@@ -234,9 +234,9 @@ Create storage containers for state files:
 ```bash
 # For each environment (dev, stg, prd)
 for ENV in dev stg prd; do
-  az storage container create --name core --account-name txstate${ENV}
-  az storage container create --name postgres-svr --account-name txstate${ENV}
-  az storage container create --name postgres-db --account-name txstate${ENV}
+  az storage container create --name core --account-name stiacstate${ENV}
+  az storage container create --name postgres-svr --account-name stiacstate${ENV}
+  az storage container create --name postgres-db --account-name stiacstate${ENV}
 done
 ```
 

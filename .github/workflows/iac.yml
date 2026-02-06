@@ -8,7 +8,7 @@
 # - postgres-db: Individual databases (application scope)
 #
 # State Files:
-# - Storage Account: txstate{env}
+# - Storage Account: stiacstate{env}
 # - Container: {stack-name}
 # - Key: {env}/terraform.tfstate (env-scope)
 # - Key: {env}/{app}/terraform.tfstate (app-scope like postgres-db)
@@ -351,7 +351,7 @@ jobs:
             echo "Initializing with state: container=$STACK, key=$STATE_KEY"
             tofu init \
               -backend-config="resource_group_name=iac" \
-              -backend-config="storage_account_name=txstate${ENV}" \
+              -backend-config="storage_account_name=stiacstate${ENV}" \
               -backend-config="container_name=${STACK}" \
               -backend-config="key=${STATE_KEY}"
             
@@ -561,7 +561,7 @@ jobs:
             
             tofu init \
               -backend-config="resource_group_name=iac" \
-              -backend-config="storage_account_name=txstate${ENV}" \
+              -backend-config="storage_account_name=stiacstate${ENV}" \
               -backend-config="container_name=${STACK}" \
               -backend-config="key=${STATE_KEY}"
             
