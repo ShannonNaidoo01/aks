@@ -380,16 +380,7 @@ jobs:
             echo "" >> $GITHUB_STEP_SUMMARY
             
             # Metadata
-            cat > "${PLAN_NAME}.meta.json" << EOF
-{
-  "commit_sha": "${{ github.sha }}",
-  "environment": "${ENV}",
-  "stack": "${STACK}",
-  "app": "${APP}",
-  "exit_code": ${EXIT_CODE},
-  "has_changes": $([ $EXIT_CODE -eq 2 ] && echo "true" || echo "false")
-}
-EOF
+            echo "{\"commit_sha\":\"${{ github.sha }}\",\"environment\":\"${ENV}\",\"stack\":\"${STACK}\",\"app\":\"${APP}\",\"exit_code\":${EXIT_CODE},\"has_changes\":$([ $EXIT_CODE -eq 2 ] && echo 'true' || echo 'false')}" > "${PLAN_NAME}.meta.json"
             
             # Copy artifacts
             cp "$PLAN_NAME" "../../plan-artifacts/" 2>/dev/null || true
