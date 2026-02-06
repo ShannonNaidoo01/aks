@@ -87,6 +87,61 @@ variable "enable_prometheus_metrics" {
 }
 
 # -----------------------------------------------------------------------------
+# DNS-01 Challenge Configuration (for wildcard certificates)
+# -----------------------------------------------------------------------------
+
+variable "enable_dns01_solver" {
+  description = "Enable DNS-01 challenge solver for wildcard certificates"
+  type        = bool
+  default     = false
+}
+
+variable "azure_dns_zone_name" {
+  description = "Name of the Azure DNS Zone (e.g., dev.tune.exchange)"
+  type        = string
+  default     = ""
+}
+
+variable "azure_dns_zone_resource_group" {
+  description = "Resource group containing the Azure DNS Zone"
+  type        = string
+  default     = ""
+}
+
+variable "azure_subscription_id" {
+  description = "Azure subscription ID for DNS Zone access"
+  type        = string
+  default     = ""
+}
+
+variable "cert_manager_service_account" {
+  description = "Service account name for cert-manager (for workload identity)"
+  type        = string
+  default     = "cert-manager"
+}
+
+variable "cert_manager_client_id" {
+  description = "Client ID of the cert-manager workload identity"
+  type        = string
+  default     = ""
+}
+
+# -----------------------------------------------------------------------------
+# Wildcard Certificate Configuration
+# -----------------------------------------------------------------------------
+
+variable "wildcard_certificates" {
+  description = "Map of wildcard certificates to create"
+  type = map(object({
+    dns_name       = string # e.g., "*.dev.tune.exchange"
+    issuer_name    = string # e.g., "letsencrypt-dns-prod"
+    secret_name    = string # e.g., "wildcard-dev-tune-exchange-tls"
+    target_namespace = optional(string, "default") # Namespace to create the secret in
+  }))
+  default = {}
+}
+
+# -----------------------------------------------------------------------------
 # Extra Configuration
 # -----------------------------------------------------------------------------
 

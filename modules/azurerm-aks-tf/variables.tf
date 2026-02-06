@@ -219,3 +219,24 @@ variable "azure_rbac_enabled" {
   type        = bool
   default     = true
 }
+
+# -----------------------------------------------------------------------------
+# DNS Zone Variables
+# -----------------------------------------------------------------------------
+
+variable "dns_zones" {
+  description = "Map of DNS zones to create for certificate management"
+  type = map(object({
+    name = string # e.g., "dev.tune.exchange"
+  }))
+  default = {}
+}
+
+variable "existing_dns_zones" {
+  description = "Map of existing DNS zones to use (not created by this module)"
+  type = map(object({
+    name                = string # e.g., "dev.tune.exchange"
+    resource_group_name = string # e.g., "dev-dns-rg"
+  }))
+  default = {}
+}

@@ -1,42 +1,31 @@
-# ═══════════════════════════════════════════════════════════════════════════════
-# Infrastructure as Code Pipeline - Multi-Environment AKS Deployment
-# ═══════════════════════════════════════════════════════════════════════════════
+# ==============================================================================
+# Infrastructure as Code Pipeline - Multi-Stack Deployment
+# ==============================================================================
 #
-# This workflow handles:
-# - OpenTofu validation and formatting
-# - Auto-versioning modules with semantic versioning on merge to main
-# - Plan/apply for dev, stg, prd environments
-# - Branch-based deployment (push to dev/stg/prd branch)
+# Stacks:
+# - core: AKS cluster, ingress-nginx, cert-manager, cluster-test, entra-groups
+# - postgres-svr: PostgreSQL operator + server (environment scope)
+# - postgres-db: Individual databases (application scope)
 #
-# Module Versioning Strategy:
-# - Modules are tagged as infra/{module}/v{major}.{minor}.{patch}
-# - Version bumps follow conventional commits:
-#   - feat: = minor bump
-#   - fix: = patch bump
-#   - BREAKING CHANGE or feat!: = major bump
+# State Files:
+# - Storage Account: txstate{env}
+# - Container: {stack-name}
+# - Key: {env}/terraform.tfstate (env-scope)
+# - Key: {env}/{app}/terraform.tfstate (app-scope like postgres-db)
 #
-# Environments:
-# - dev: Development environment (branch: dev)
-# - stg: Staging environment (branch: stg)  
-# - prd: Production environment (branch: prd)
-#
-# Required GitHub Secrets (per environment):
-# - ARM_CLIENT_ID: Azure Service Principal Client ID
-# - ARM_CLIENT_SECRET: Azure Service Principal Client Secret
-# - ARM_SUBSCRIPTION_ID: Azure Subscription ID
-# - ARM_TENANT_ID: Azure AD Tenant ID
-# - STATE_ACCESS_KEY: Azure Storage Account access key for tfstate
+# Branching:
+# - dev/stg/prd branches -> deploy to matching environment
+# - main branch -> deploys to dev
 #
 # Deploy Commands:
 # - Plan only: Push to branch
-# - Apply: Push with [tfapply] in commit message
+# - Apply: Push with [tfapply] in commit message, or use workflow_dispatch
 #
-# ═══════════════════════════════════════════════════════════════════════════════
+# ==============================================================================
 
 name: Infrastructure as Code
 
 on:
-  # Branch-based deployment
   push:
     branches:
       - dev
@@ -44,21 +33,17 @@ on:
       - prd
       - main
     paths:
-      - '*.tf'
+      - 'stacks/**'
       - 'modules/**'
-      - 'environments/**'
       - '.github/workflows/iac.yml'
-  
-  # PR validation (plans against dev)
+
   pull_request:
     branches: [dev, main]
     paths:
-      - '*.tf'
+      - 'stacks/**'
       - 'modules/**'
-      - 'environments/**'
       - '.github/workflows/iac.yml'
-  
-  # Manual trigger
+
   workflow_dispatch:
     inputs:
       environment:
@@ -70,6 +55,21 @@ on:
           - dev
           - stg
           - prd
+      stack:
+        description: 'Stack to deploy'
+        required: true
+        default: 'core'
+        type: choice
+        options:
+          - core
+          - postgres-svr
+          - postgres-db
+          - all
+      app_name:
+        description: 'App name (required for postgres-db, e.g., app1, app2)'
+        required: false
+        default: ''
+        type: string
       action:
         description: 'Action to perform'
         required: true
@@ -80,72 +80,91 @@ on:
           - apply
 
 concurrency:
-  group: iac-${{ github.event.inputs.environment || github.ref_name }}
+  group: iac-${{ github.event.inputs.stack || 'auto' }}-${{ github.event.inputs.app_name || 'default' }}-${{ github.event.inputs.environment || github.ref_name }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   TOFU_VERSION: '1.6.0'
-  WORKING_DIR: '.'
   ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
   ARM_CLIENT_SECRET: ${{ secrets.ARM_CLIENT_SECRET }}
   ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
   ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# JOBS
-# ═══════════════════════════════════════════════════════════════════════════════
-
 jobs:
-  # ─────────────────────────────────────────────────────────────────────────────
-  # Determine Environment
-  # ─────────────────────────────────────────────────────────────────────────────
+  # ============================================================================
+  # Setup: Determine environment and detect changed stacks
+  # ============================================================================
   setup:
     name: Setup
     runs-on: ubuntu-latest
     outputs:
       environment: ${{ steps.set-env.outputs.environment }}
-    
-    steps:
-      - name: Determine Environment
-        id: set-env
-        run: |
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            ENV="${{ github.event.inputs.environment }}"
-          elif [[ "${{ github.event_name }}" == "pull_request" ]]; then
-            ENV="dev"
-          else
-            BRANCH="${{ github.ref_name }}"
-            # Map branch to environment (main and feature branches default to dev)
-            case "$BRANCH" in
-              dev|stg|prd) ENV="$BRANCH" ;;
-              main)        ENV="dev" ;;  # main branch deploys to dev
-              *)           ENV="dev" ;;  # Feature branches use dev environment
-            esac
-          fi
-          echo "environment=$ENV" >> $GITHUB_OUTPUT
-          echo "🎯 Target environment: $ENV"
+      app_name: ${{ steps.set-env.outputs.app_name }}
+      stacks: ${{ steps.detect-stacks.outputs.stacks }}
+      stacks_count: ${{ steps.detect-stacks.outputs.stacks_count }}
 
-  # ─────────────────────────────────────────────────────────────────────────────
-  # Detect Changed Modules
-  # ─────────────────────────────────────────────────────────────────────────────
-  detect-changes:
-    name: Detect Changes
-    runs-on: ubuntu-latest
-    outputs:
-      modules: ${{ steps.changes.outputs.modules }}
-      modules_list: ${{ steps.changes.outputs.modules_list }}
-      any_module_changed: ${{ steps.changes.outputs.any_module_changed }}
-      stack_changed: ${{ steps.changes.outputs.stack_changed }}
-    
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Detect changed modules
-        id: changes
+      - name: Determine Environment
+        id: set-env
         run: |
-          # Determine base commit for diff
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            ENV="${{ github.event.inputs.environment }}"
+            APP_NAME="${{ github.event.inputs.app_name }}"
+          elif [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            ENV="dev"
+            APP_NAME=""
+          else
+            BRANCH="${{ github.ref_name }}"
+            case "$BRANCH" in
+              dev|stg|prd) ENV="$BRANCH" ;;
+              main)        ENV="dev" ;;
+              *)           ENV="dev" ;;
+            esac
+            APP_NAME=""
+          fi
+          echo "environment=$ENV" >> $GITHUB_OUTPUT
+          echo "app_name=$APP_NAME" >> $GITHUB_OUTPUT
+          echo "🎯 Target environment: $ENV"
+          if [[ -n "$APP_NAME" ]]; then
+            echo "🎯 App name: $APP_NAME"
+          fi
+
+      - name: Detect Changed Stacks
+        id: detect-stacks
+        run: |
+          ENV="${{ steps.set-env.outputs.environment }}"
+          APP_NAME="${{ steps.set-env.outputs.app_name }}"
+          
+          # Manual trigger with specific stack
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            STACK="${{ github.event.inputs.stack }}"
+            
+            if [[ "$STACK" == "all" ]]; then
+              # For 'all', we only do env-scope stacks
+              STACKS='[{"name":"core","app":""},{"name":"postgres-svr","app":""}]'
+            elif [[ "$STACK" == "postgres-db" ]]; then
+              # postgres-db requires app_name
+              if [[ -z "$APP_NAME" ]]; then
+                echo "❌ Error: postgres-db requires app_name"
+                echo "stacks=[]" >> $GITHUB_OUTPUT
+                echo "stacks_count=0" >> $GITHUB_OUTPUT
+                exit 0
+              fi
+              STACKS="[{\"name\":\"postgres-db\",\"app\":\"$APP_NAME\"}]"
+            else
+              STACKS="[{\"name\":\"$STACK\",\"app\":\"\"}]"
+            fi
+            echo "stacks=$STACKS" >> $GITHUB_OUTPUT
+            echo "stacks_count=$(echo $STACKS | jq length)" >> $GITHUB_OUTPUT
+            echo "📦 Manual trigger for stack(s): $STACKS"
+            exit 0
+          fi
+          
+          # Auto-detect changed stacks
           if [[ "${{ github.event_name }}" == "pull_request" ]]; then
             BASE_SHA="${{ github.event.pull_request.base.sha }}"
           else
@@ -157,43 +176,55 @@ jobs:
           
           echo "Comparing $BASE_SHA to HEAD"
           
-          # Find changed module directories
-          CHANGED_MODULES=$(git diff --name-only "$BASE_SHA" HEAD -- 'modules/' 2>/dev/null | \
-            grep '^modules/' | \
+          # Find changed stacks (excluding postgres-db for auto-detect)
+          CHANGED_STACKS=$(git diff --name-only "$BASE_SHA" HEAD -- 'stacks/' 2>/dev/null | \
+            grep '^stacks/' | \
             cut -d'/' -f2 | \
-            sort -u | \
-            jq -R -s -c 'split("\n") | map(select(length > 0))' || echo '[]')
+            grep -v 'postgres-db' | \
+            sort -u || echo "")
           
-          # Check if root module files changed
-          STACK_CHANGED=$(git diff --name-only "$BASE_SHA" HEAD -- \
-            'main.tf' 'variables.tf' 'outputs.tf' \
-            'providers.tf' 'environments/' 2>/dev/null | wc -l)
+          # Check if modules changed (affects env-scope stacks)
+          MODULES_CHANGED=$(git diff --name-only "$BASE_SHA" HEAD -- 'modules/' 2>/dev/null | wc -l)
           
-          echo "Changed modules: $CHANGED_MODULES"
-          echo "Stack files changed: $STACK_CHANGED"
-          
-          echo "modules=$CHANGED_MODULES" >> $GITHUB_OUTPUT
-          echo "modules_list=$(echo $CHANGED_MODULES | jq -r 'join(",")')" >> $GITHUB_OUTPUT
-          
-          if [[ "$CHANGED_MODULES" != "[]" && "$CHANGED_MODULES" != "" && "$CHANGED_MODULES" != "null" ]]; then
-            echo "any_module_changed=true" >> $GITHUB_OUTPUT
-          else
-            echo "any_module_changed=false" >> $GITHUB_OUTPUT
+          if [[ "$MODULES_CHANGED" -gt 0 ]]; then
+            echo "Modules changed - including env-scope stacks"
+            CHANGED_STACKS="core postgres-svr"
           fi
           
-          if [[ "$STACK_CHANGED" -gt 0 ]]; then
-            echo "stack_changed=true" >> $GITHUB_OUTPUT
-          else
-            echo "stack_changed=false" >> $GITHUB_OUTPUT
+          if [[ -z "$CHANGED_STACKS" ]]; then
+            echo "No stacks changed"
+            echo "stacks=[]" >> $GITHUB_OUTPUT
+            echo "stacks_count=0" >> $GITHUB_OUTPUT
+            exit 0
           fi
+          
+          # Build JSON array (env-scope stacks only for auto-detect)
+          STACKS_JSON="["
+          FIRST=true
+          for stack in $CHANGED_STACKS; do
+            if [[ -d "stacks/$stack" ]]; then
+              if [[ "$FIRST" != "true" ]]; then
+                STACKS_JSON="$STACKS_JSON,"
+              fi
+              STACKS_JSON="$STACKS_JSON{\"name\":\"$stack\",\"app\":\"\"}"
+              FIRST=false
+            fi
+          done
+          STACKS_JSON="$STACKS_JSON]"
+          
+          echo "stacks=$STACKS_JSON" >> $GITHUB_OUTPUT
+          echo "stacks_count=$(echo $STACKS_JSON | jq length)" >> $GITHUB_OUTPUT
+          echo "📦 Changed stacks: $STACKS_JSON"
 
-  # ─────────────────────────────────────────────────────────────────────────────
-  # Validate OpenTofu
-  # ─────────────────────────────────────────────────────────────────────────────
+  # ============================================================================
+  # Validate: Format and syntax check
+  # ============================================================================
   validate:
     name: Validate
     runs-on: ubuntu-latest
-    
+    needs: [setup]
+    if: needs.setup.outputs.stacks_count != '0'
+
     steps:
       - uses: actions/checkout@v4
 
@@ -203,163 +234,40 @@ jobs:
           tofu_version: ${{ env.TOFU_VERSION }}
 
       - name: Format Check
-        working-directory: ${{ env.WORKING_DIR }}
         run: tofu fmt -check -recursive -diff
 
-      - name: Initialize (validation only)
-        working-directory: ${{ env.WORKING_DIR }}
-        run: tofu init -backend=false
-
-      - name: Validate
-        working-directory: ${{ env.WORKING_DIR }}
-        run: tofu validate
-
-  # ─────────────────────────────────────────────────────────────────────────────
-  # Tag Modules on Merge (Auto-Versioning)
-  # ─────────────────────────────────────────────────────────────────────────────
-  tag-modules:
-    name: Tag Module Versions
-    runs-on: ubuntu-latest
-    needs: [detect-changes, validate]
-    if: |
-      github.event_name == 'push' && 
-      github.ref_name == 'dev' &&
-      needs.detect-changes.outputs.any_module_changed == 'true' &&
-      needs.validate.result == 'success'
-    
-    permissions:
-      contents: write
-
-    outputs:
-      tagged_modules: ${{ steps.tag.outputs.tagged_modules }}
-
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Configure Git
+      - name: Validate Stacks
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
-      - name: Tag changed modules
-        id: tag
-        env:
-          CHANGED_MODULES: ${{ needs.detect-changes.outputs.modules_list }}
-        run: |
-          TAGGED_MODULES=""
-          IFS=',' read -ra MODULES <<< "$CHANGED_MODULES"
+          STACKS='${{ needs.setup.outputs.stacks }}'
           
-          for module in "${MODULES[@]}"; do
-            if [[ -z "$module" ]]; then
-              continue
-            fi
+          for row in $(echo "$STACKS" | jq -r '.[] | @base64'); do
+            STACK=$(echo "$row" | base64 --decode | jq -r '.name')
             
-            # Map module directory to tag prefix
-            case "$module" in
-              azurerm-aks-tf)       TAG_PREFIX="infra/aks" ;;
-              helm-postgres-tf)     TAG_PREFIX="infra/postgres" ;;
-              helm-kafka-tf)        TAG_PREFIX="infra/kafka" ;;
-              *)                    TAG_PREFIX="infra/${module%-tf}" ;;
-            esac
-            
-            # Get latest version tag for this module
-            LATEST_TAG=$(git tag -l "${TAG_PREFIX}/v*" | sort -V | tail -1)
-            
-            if [[ -z "$LATEST_TAG" ]]; then
-              # First version
-              NEW_VERSION="v1.0.0"
-              COMPARE_REF="HEAD~10"
-            else
-              COMPARE_REF="$LATEST_TAG"
-              
-              # Extract version components
-              VERSION=${LATEST_TAG##*/}
-              MAJOR=$(echo "$VERSION" | cut -d. -f1 | tr -d 'v')
-              MINOR=$(echo "$VERSION" | cut -d. -f2)
-              PATCH=$(echo "$VERSION" | cut -d. -f3)
-              
-              # Get commits affecting this module since last tag
-              COMMITS=$(git log --oneline "$LATEST_TAG"..HEAD -- "modules/$module" 2>/dev/null || echo "")
-              
-              if [[ -z "$COMMITS" ]]; then
-                echo "No commits found for $module since $LATEST_TAG, skipping"
-                continue
-              fi
-              
-              # Determine version bump from conventional commits
-              if echo "$COMMITS" | grep -qiE "(BREAKING CHANGE|^[a-f0-9]+ [a-z]+(\([^)]+\))?!:)"; then
-                NEW_VERSION="v$((MAJOR + 1)).0.0"
-                BUMP_REASON="BREAKING CHANGE"
-              elif echo "$COMMITS" | grep -qiE "^[a-f0-9]+ feat(\([^)]+\))?:"; then
-                NEW_VERSION="v${MAJOR}.$((MINOR + 1)).0"
-                BUMP_REASON="feat"
-              else
-                NEW_VERSION="v${MAJOR}.${MINOR}.$((PATCH + 1))"
-                BUMP_REASON="fix/chore"
-              fi
-              
-              echo "Version bump for $module: $VERSION -> $NEW_VERSION (reason: $BUMP_REASON)"
-            fi
-            
-            NEW_TAG="${TAG_PREFIX}/${NEW_VERSION}"
-            
-            # Generate changelog for tag message
-            CHANGELOG=$(git log --pretty=format:"- %s (%h)" "$COMPARE_REF"..HEAD -- "modules/$module" 2>/dev/null | head -20)
-            
-            TAG_MESSAGE="Release $module $NEW_VERSION
-
-          Changes:
-          $CHANGELOG"
-            
-            echo "Creating tag: $NEW_TAG"
-            git tag -a "$NEW_TAG" -m "$TAG_MESSAGE"
-            git push origin "$NEW_TAG"
-            
-            echo "✅ Tagged $module as $NEW_TAG"
-            TAGGED_MODULES="${TAGGED_MODULES}${module}:${NEW_TAG},"
-          done
-          
-          echo "tagged_modules=${TAGGED_MODULES%,}" >> $GITHUB_OUTPUT
-
-      - name: Summary
-        run: |
-          echo "## 🏷️ Module Tags Created" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          IFS=',' read -ra TAGS <<< "${{ steps.tag.outputs.tagged_modules }}"
-          for tag_info in "${TAGS[@]}"; do
-            if [[ -n "$tag_info" ]]; then
-              MODULE=$(echo "$tag_info" | cut -d: -f1)
-              TAG=$(echo "$tag_info" | cut -d: -f2)
-              echo "- **$MODULE**: \`$TAG\`" >> $GITHUB_STEP_SUMMARY
+            if [[ -d "stacks/$STACK" ]]; then
+              echo "📦 Validating stack: $STACK"
+              cd "stacks/$STACK"
+              tofu init -backend=false
+              tofu validate
+              cd ../..
             fi
           done
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Use these tags in your root module:" >> $GITHUB_STEP_SUMMARY
-          echo "\`\`\`hcl" >> $GITHUB_STEP_SUMMARY
-          echo "module \"azurerm-aks\" {" >> $GITHUB_STEP_SUMMARY
-          echo "  source = \"git::https://github.com/${{ github.repository }}.git//modules/azurerm-aks-tf?ref=infra/aks/vX.Y.Z\"" >> $GITHUB_STEP_SUMMARY
-          echo "}" >> $GITHUB_STEP_SUMMARY
-          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
 
-  # ─────────────────────────────────────────────────────────────────────────────
-  # Plan Infrastructure
-  # ─────────────────────────────────────────────────────────────────────────────
+  # ============================================================================
+  # Plan: Generate plan for each stack
+  # ============================================================================
   plan:
-    name: Plan [${{ needs.setup.outputs.environment }}]
+    name: Plan
     runs-on: ubuntu-latest
     needs: [setup, validate]
-    if: needs.validate.result == 'success'
+    if: needs.validate.result == 'success' && needs.setup.outputs.stacks_count != '0'
     environment: ${{ needs.setup.outputs.environment }}
-    
+
     permissions:
       contents: read
       pull-requests: write
 
     outputs:
-      plan_exit_code: ${{ steps.plan.outputs.exitcode }}
+      plans: ${{ steps.plan-all.outputs.plans }}
 
     steps:
       - uses: actions/checkout@v4
@@ -369,188 +277,210 @@ jobs:
         with:
           tofu_version: ${{ env.TOFU_VERSION }}
 
-      - name: Initialize OpenTofu
-        working-directory: ${{ env.WORKING_DIR }}
+      - name: Plan All Stacks
+        id: plan-all
         env:
           ARM_ACCESS_KEY: ${{ secrets.STATE_ACCESS_KEY }}
         run: |
           ENV="${{ needs.setup.outputs.environment }}"
-          echo "Initializing for environment: $ENV"
-          tofu init \
-            -backend-config="resource_group_name=iac" \
-            -backend-config="storage_account_name=stiacstate${ENV}" \
-            -backend-config="container_name=tfstate" \
-            -backend-config="key=${ENV}/terraform.tfstate"
-
-      - name: Install tf-summarize
-        run: |
-          curl -sSL https://github.com/dineshba/tf-summarize/releases/download/v0.3.10/tf-summarize_linux_amd64.tar.gz | tar xz
-          sudo mv tf-summarize /usr/local/bin/
-
-      - name: Plan OpenTofu
-        id: plan
-        working-directory: ${{ env.WORKING_DIR }}
-        continue-on-error: true
-        run: |
-          set +e
-          ENV="${{ needs.setup.outputs.environment }}"
+          STACKS='${{ needs.setup.outputs.stacks }}'
+          PLANS_RESULT="[]"
+          ALL_SUCCESS=true
           
-          tofu plan \
-            -var-file="environments/${ENV}.tfvars" \
-            -out=tfplan-${ENV} \
-            -detailed-exitcode \
-            -no-color 2>&1 | tee plan-output.txt
+          mkdir -p plan-artifacts
           
-          EXIT_CODE=$?
-          echo "exitcode=$EXIT_CODE" >> $GITHUB_OUTPUT
+          echo "## 🏗️ OpenTofu Plans for \`${ENV}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
           
-          # Generate JSON plan for tf-summarize
-          if [[ $EXIT_CODE -ne 1 ]]; then
-            tofu show -json tfplan-${ENV} > tfplan-${ENV}.json 2>/dev/null || true
-          fi
+          for row in $(echo "$STACKS" | jq -r '.[] | @base64'); do
+            STACK=$(echo "$row" | base64 --decode | jq -r '.name')
+            APP=$(echo "$row" | base64 --decode | jq -r '.app')
+            
+            if [[ ! -d "stacks/$STACK" ]]; then
+              echo "⚠️ Stack directory not found: stacks/$STACK"
+              continue
+            fi
+            
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "📦 Planning stack: $STACK"
+            if [[ -n "$APP" && "$APP" != "null" && "$APP" != "" ]]; then
+              echo "📦 App: $APP"
+            fi
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            
+            cd "stacks/$STACK"
+            
+            # Determine tfvars and state key based on app-scope or env-scope
+            if [[ -n "$APP" && "$APP" != "null" && "$APP" != "" ]]; then
+              # App-scope (e.g., postgres-db)
+              TFVARS_FILE="environments/${ENV}-${APP}.tfvars"
+              STATE_KEY="${ENV}/${APP}/terraform.tfstate"
+              PLAN_NAME="tfplan-${STACK}-${ENV}-${APP}"
+            else
+              # Env-scope (e.g., core, postgres-svr)
+              TFVARS_FILE="environments/${ENV}.tfvars"
+              STATE_KEY="${ENV}/terraform.tfstate"
+              PLAN_NAME="tfplan-${STACK}-${ENV}"
+            fi
+            
+            # Check if tfvars exists
+            if [[ ! -f "$TFVARS_FILE" ]]; then
+              echo "⚠️ tfvars not found: $TFVARS_FILE - skipping"
+              cd ../..
+              continue
+            fi
+            
+            # Initialize
+            echo "Initializing with state: container=$STACK, key=$STATE_KEY"
+            tofu init \
+              -backend-config="resource_group_name=iac" \
+              -backend-config="storage_account_name=txstate${ENV}" \
+              -backend-config="container_name=${STACK}" \
+              -backend-config="key=${STATE_KEY}"
+            
+            # Plan
+            set +e
+            tofu plan \
+              -var-file="$TFVARS_FILE" \
+              -out="$PLAN_NAME" \
+              -detailed-exitcode \
+              -no-color 2>&1 | tee "plan-output.txt"
+            
+            EXIT_CODE=$?
+            set -e
+            
+            # Parse metrics
+            ADDS=$(grep -oP 'Plan: \K\d+(?= to add)' plan-output.txt 2>/dev/null || echo "0")
+            CHANGES=$(grep -oP ', \K\d+(?= to change)' plan-output.txt 2>/dev/null || echo "0")
+            DESTROYS=$(grep -oP ', \K\d+(?= to destroy)' plan-output.txt 2>/dev/null || echo "0")
+            
+            # Status
+            if [[ $EXIT_CODE -eq 0 ]]; then
+              STATUS="✅ No Changes"
+            elif [[ $EXIT_CODE -eq 2 ]]; then
+              STATUS="⚠️ Changes Detected"
+            else
+              STATUS="❌ Failed"
+              ALL_SUCCESS=false
+            fi
+            
+            # Summary
+            DISPLAY_NAME="$STACK"
+            if [[ -n "$APP" && "$APP" != "null" && "$APP" != "" ]]; then
+              DISPLAY_NAME="${STACK}/${APP}"
+            fi
+            
+            echo "### 📦 Stack: \`$DISPLAY_NAME\` - $STATUS" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "| Action | Count |" >> $GITHUB_STEP_SUMMARY
+            echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+            echo "| 🟢 Add | $ADDS |" >> $GITHUB_STEP_SUMMARY
+            echo "| 🟡 Change | $CHANGES |" >> $GITHUB_STEP_SUMMARY
+            echo "| 🔴 Destroy | $DESTROYS |" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            
+            # Metadata
+            cat > "${PLAN_NAME}.meta.json" << EOF
+{
+  "commit_sha": "${{ github.sha }}",
+  "environment": "${ENV}",
+  "stack": "${STACK}",
+  "app": "${APP}",
+  "exit_code": ${EXIT_CODE},
+  "has_changes": $([ $EXIT_CODE -eq 2 ] && echo "true" || echo "false")
+}
+EOF
+            
+            # Copy artifacts
+            cp "$PLAN_NAME" "../../plan-artifacts/" 2>/dev/null || true
+            cp "${PLAN_NAME}.meta.json" "../../plan-artifacts/" 2>/dev/null || true
+            cp "plan-output.txt" "../../plan-artifacts/${PLAN_NAME}-output.txt" 2>/dev/null || true
+            
+            PLANS_RESULT=$(echo "$PLANS_RESULT" | jq ". + [{\"stack\":\"$STACK\",\"app\":\"$APP\",\"exit_code\":$EXIT_CODE}]")
+            
+            cd ../..
+          done
           
-          if [[ $EXIT_CODE -eq 1 ]]; then
-            echo "❌ Plan failed"
+          echo "plans=$(echo $PLANS_RESULT | jq -c)" >> $GITHUB_OUTPUT
+          
+          if [[ "$ALL_SUCCESS" != "true" ]]; then
+            echo "❌ One or more plans failed"
             exit 1
           fi
 
-      - name: Generate Plan Summary
-        if: always()
-        working-directory: ${{ env.WORKING_DIR }}
-        run: |
-          ENV="${{ needs.setup.outputs.environment }}"
-          EXIT_CODE="${{ steps.plan.outputs.exitcode }}"
-          
-          # Status emoji and message
-          if [[ "$EXIT_CODE" == "0" ]]; then
-            STATUS="✅ No Changes"
-            EMOJI="white_check_mark"
-          elif [[ "$EXIT_CODE" == "2" ]]; then
-            STATUS="⚠️ Changes Detected"
-            EMOJI="warning"
-          else
-            STATUS="❌ Plan Failed"
-            EMOJI="x"
-          fi
-          
-          echo "## 🏗️ OpenTofu Plan: \`${ENV}\` - ${STATUS}" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          
-          # Add tf-summarize output if plan succeeded
-          if [[ -f "tfplan-${ENV}.json" ]]; then
-            echo "### 📊 Resource Summary" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            tf-summarize -md tfplan-${ENV}.json >> $GITHUB_STEP_SUMMARY 2>/dev/null || true
-            echo "" >> $GITHUB_STEP_SUMMARY
-          fi
-          
-          # Extract key metrics from plan output
-          ADDS=$(grep -oP 'Plan: \K\d+(?= to add)' plan-output.txt 2>/dev/null || echo "0")
-          CHANGES=$(grep -oP ', \K\d+(?= to change)' plan-output.txt 2>/dev/null || echo "0")
-          DESTROYS=$(grep -oP ', \K\d+(?= to destroy)' plan-output.txt 2>/dev/null || echo "0")
-          
-          echo "### 📈 Change Metrics" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Action | Count |" >> $GITHUB_STEP_SUMMARY
-          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "| 🟢 Add | ${ADDS} |" >> $GITHUB_STEP_SUMMARY
-          echo "| 🟡 Change | ${CHANGES} |" >> $GITHUB_STEP_SUMMARY
-          echo "| 🔴 Destroy | ${DESTROYS} |" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          
-          # Full plan in collapsible section
-          echo "<details>" >> $GITHUB_STEP_SUMMARY
-          echo "<summary>📜 Full Plan Output (click to expand)</summary>" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo '```hcl' >> $GITHUB_STEP_SUMMARY
-          cat plan-output.txt >> $GITHUB_STEP_SUMMARY || true
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          echo "</details>" >> $GITHUB_STEP_SUMMARY
-
-      - name: Create plan metadata
-        working-directory: ${{ env.WORKING_DIR }}
-        run: |
-          ENV="${{ needs.setup.outputs.environment }}"
-          cat > tfplan-${ENV}.meta.json << EOF
-          {
-            "commit_sha": "${{ github.sha }}",
-            "environment": "${ENV}",
-            "created_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-            "created_by": "${{ github.actor }}",
-            "workflow_run_id": "${{ github.run_id }}",
-            "has_changes": ${{ steps.plan.outputs.exitcode == '2' && 'true' || 'false' }}
-          }
-          EOF
-
-      - name: Upload Plan Artifact
+      - name: Upload Plan Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: tfplan-${{ needs.setup.outputs.environment }}-${{ github.run_id }}
-          path: |
-            ${{ env.WORKING_DIR }}/tfplan-${{ needs.setup.outputs.environment }}
-            ${{ env.WORKING_DIR }}/tfplan-${{ needs.setup.outputs.environment }}.json
-            ${{ env.WORKING_DIR }}/tfplan-${{ needs.setup.outputs.environment }}.meta.json
-            ${{ env.WORKING_DIR }}/plan-output.txt
+          name: tfplans-${{ needs.setup.outputs.environment }}-${{ github.run_id }}
+          path: plan-artifacts/
           retention-days: 7
 
       - name: Comment Plan on PR
         if: github.event_name == 'pull_request'
         uses: actions/github-script@v7
+        env:
+          ENV: ${{ needs.setup.outputs.environment }}
+          PLANS: ${{ steps.plan-all.outputs.plans }}
         with:
           script: |
-            const fs = require('fs');
-            const env = '${{ needs.setup.outputs.environment }}';
-            const exitCode = '${{ steps.plan.outputs.exitcode }}';
-            let planOutput = '';
-            try {
-              planOutput = fs.readFileSync('${{ env.WORKING_DIR }}/plan-output.txt', 'utf8');
-            } catch (e) {
-              planOutput = 'Unable to read plan output';
+            const env = process.env.ENV;
+            const plans = JSON.parse(process.env.PLANS || '[]');
+            
+            let body = '## 🏗️ OpenTofu Plans for `' + env + '`\n\n';
+            body += '| Stack | Status |\n|-------|--------|\n';
+            
+            for (const plan of plans) {
+              const status = plan.exit_code === 0 ? '✅ No Changes' : 
+                            plan.exit_code === 2 ? '⚠️ Changes' : '❌ Failed';
+              const name = plan.app ? plan.stack + '/' + plan.app : plan.stack;
+              body += '| ' + name + ' | ' + status + ' |\n';
             }
-            const addMatch = planOutput.match(/Plan: (\d+) to add/);
-            const changeMatch = planOutput.match(/(\d+) to change/);
-            const destroyMatch = planOutput.match(/(\d+) to destroy/);
-            const adds = addMatch ? addMatch[1] : '0';
-            const changes = changeMatch ? changeMatch[1] : '0';
-            const destroys = destroyMatch ? destroyMatch[1] : '0';
-            let status = '✅ No Changes';
-            if (exitCode === '2') status = '⚠️ Changes Detected';
-            if (exitCode === '1') status = '❌ Plan Failed';
-            const truncated = planOutput.length > 50000 ? planOutput.substring(0, 50000) + '\n\n... (truncated)' : planOutput;
-            const body = '## 🏗️ OpenTofu Plan: `' + env + '` ' + status + '\n\n' +
-              '### 📈 Change Summary\n\n' +
-              '| Action | Count |\n|--------|-------|\n' +
-              '| 🟢 Add | ' + adds + ' |\n' +
-              '| 🟡 Change | ' + changes + ' |\n' +
-              '| 🔴 Destroy | ' + destroys + ' |\n\n' +
-              '<details>\n<summary>📜 Full Plan Output</summary>\n\n```hcl\n' + truncated + '\n```\n\n</details>\n\n' +
-              '---\n📝 Commit: `${{ github.sha }}`\n🔗 [Workflow Run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})';
+            
+            body += '\n---\n📝 Commit: `${{ github.sha }}`';
+            
             const { data: comments } = await github.rest.issues.listComments({
-              owner: context.repo.owner, repo: context.repo.repo, issue_number: context.issue.number
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number
             });
-            const botComment = comments.find(c => c.user.login === 'github-actions[bot]' && c.body.includes('OpenTofu Plan:'));
+            
+            const botComment = comments.find(c => 
+              c.user.login === 'github-actions[bot]' && 
+              c.body.includes('OpenTofu Plans')
+            );
+            
             if (botComment) {
-              await github.rest.issues.updateComment({ owner: context.repo.owner, repo: context.repo.repo, comment_id: botComment.id, body: body });
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body: body
+              });
             } else {
-              await github.rest.issues.createComment({ owner: context.repo.owner, repo: context.repo.repo, issue_number: context.issue.number, body: body });
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: body
+              });
             }
 
-  # ─────────────────────────────────────────────────────────────────────────────
-  # Apply Infrastructure
-  # ─────────────────────────────────────────────────────────────────────────────
+  # ============================================================================
+  # Apply: Apply plans for each stack
+  # ============================================================================
   apply:
-    name: Apply [${{ needs.setup.outputs.environment }}]
+    name: Apply
     runs-on: ubuntu-latest
     needs: [setup, plan]
     if: |
       needs.plan.result == 'success' &&
       ((github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'apply') ||
        (github.event_name == 'push' && contains(github.event.head_commit.message, '[tfapply]')))
-    
-    environment: 
+
+    environment:
       name: ${{ needs.setup.outputs.environment }}
       url: https://portal.azure.com
-    
+
     steps:
       - uses: actions/checkout@v4
 
@@ -559,76 +489,98 @@ jobs:
         with:
           tofu_version: ${{ env.TOFU_VERSION }}
 
-      - name: Download Plan
+      - name: Download Plans
         uses: actions/download-artifact@v4
         with:
-          name: tfplan-${{ needs.setup.outputs.environment }}-${{ github.run_id }}
-          path: ${{ env.WORKING_DIR }}
+          name: tfplans-${{ needs.setup.outputs.environment }}-${{ github.run_id }}
+          path: plan-artifacts
 
-      - name: Verify Plan Freshness
-        working-directory: ${{ env.WORKING_DIR }}
-        run: |
-          ENV="${{ needs.setup.outputs.environment }}"
-          
-          if [[ ! -f "tfplan-${ENV}.meta.json" ]]; then
-            echo "❌ Plan metadata not found."
-            exit 1
-          fi
-          
-          PLAN_SHA=$(jq -r '.commit_sha' "tfplan-${ENV}.meta.json")
-          
-          echo "Plan commit: $PLAN_SHA"
-          echo "Current commit: ${{ github.sha }}"
-          
-          if [[ "$PLAN_SHA" != "${{ github.sha }}" ]]; then
-            echo "❌ Plan is STALE. Re-run with action=plan first."
-            exit 1
-          fi
-          
-          echo "✅ Plan is fresh"
-
-      - name: Initialize OpenTofu
-        working-directory: ${{ env.WORKING_DIR }}
+      - name: Apply All Stacks
         env:
           ARM_ACCESS_KEY: ${{ secrets.STATE_ACCESS_KEY }}
         run: |
           ENV="${{ needs.setup.outputs.environment }}"
-          tofu init \
-            -backend-config="resource_group_name=iac" \
-            -backend-config="storage_account_name=stiacstate${ENV}" \
-            -backend-config="container_name=tfstate" \
-            -backend-config="key=${ENV}/terraform.tfstate"
-
-      - name: Apply OpenTofu
-        working-directory: ${{ env.WORKING_DIR }}
-        run: |
-          ENV="${{ needs.setup.outputs.environment }}"
-          echo "🚀 Applying infrastructure changes to ${ENV}..."
-          tofu apply -auto-approve tfplan-${ENV}
-
-      - name: Summary
-        run: |
-          ENV="${{ needs.setup.outputs.environment }}"
-          echo "## ✅ Apply Completed" >> $GITHUB_STEP_SUMMARY
+          STACKS='${{ needs.setup.outputs.stacks }}'
+          
+          echo "## 🚀 Applying Infrastructure to \`${ENV}\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "- **Environment:** ${ENV}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Commit:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Applied by:** ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+          
+          for row in $(echo "$STACKS" | jq -r '.[] | @base64'); do
+            STACK=$(echo "$row" | base64 --decode | jq -r '.name')
+            APP=$(echo "$row" | base64 --decode | jq -r '.app')
+            
+            if [[ ! -d "stacks/$STACK" ]]; then
+              continue
+            fi
+            
+            # Determine plan name and state key
+            if [[ -n "$APP" && "$APP" != "null" && "$APP" != "" ]]; then
+              PLAN_NAME="tfplan-${STACK}-${ENV}-${APP}"
+              STATE_KEY="${ENV}/${APP}/terraform.tfstate"
+              DISPLAY_NAME="${STACK}/${APP}"
+            else
+              PLAN_NAME="tfplan-${STACK}-${ENV}"
+              STATE_KEY="${ENV}/terraform.tfstate"
+              DISPLAY_NAME="$STACK"
+            fi
+            
+            # Check plan exists and is fresh
+            if [[ ! -f "plan-artifacts/${PLAN_NAME}.meta.json" ]]; then
+              echo "⚠️ Plan not found for $DISPLAY_NAME, skipping"
+              continue
+            fi
+            
+            PLAN_SHA=$(jq -r '.commit_sha' "plan-artifacts/${PLAN_NAME}.meta.json")
+            HAS_CHANGES=$(jq -r '.has_changes' "plan-artifacts/${PLAN_NAME}.meta.json")
+            
+            if [[ "$PLAN_SHA" != "${{ github.sha }}" ]]; then
+              echo "❌ Plan for $DISPLAY_NAME is stale"
+              exit 1
+            fi
+            
+            if [[ "$HAS_CHANGES" != "true" ]]; then
+              echo "- **$DISPLAY_NAME**: ⏭️ Skipped (no changes)" >> $GITHUB_STEP_SUMMARY
+              continue
+            fi
+            
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "🚀 Applying stack: $DISPLAY_NAME"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            
+            cp "plan-artifacts/${PLAN_NAME}" "stacks/$STACK/"
+            
+            cd "stacks/$STACK"
+            
+            tofu init \
+              -backend-config="resource_group_name=iac" \
+              -backend-config="storage_account_name=txstate${ENV}" \
+              -backend-config="container_name=${STACK}" \
+              -backend-config="key=${STATE_KEY}"
+            
+            tofu apply -auto-approve "$PLAN_NAME"
+            
+            echo "- **$DISPLAY_NAME**: ✅ Applied" >> $GITHUB_STEP_SUMMARY
+            
+            cd ../..
+          done
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Applied by: **${{ github.actor }}**" >> $GITHUB_STEP_SUMMARY
 
-  # ─────────────────────────────────────────────────────────────────────────────
+  # ============================================================================
   # Quality Gate
-  # ─────────────────────────────────────────────────────────────────────────────
+  # ============================================================================
   quality-gate:
     name: Quality Gate
     runs-on: ubuntu-latest
     needs: [setup, validate, plan]
-    if: always()
+    if: always() && needs.setup.outputs.stacks_count != '0'
 
     steps:
       - name: Evaluate Results
         run: |
           ENV="${{ needs.setup.outputs.environment }}"
-          echo "## IaC Quality Gate Results [$ENV]" >> $GITHUB_STEP_SUMMARY
+          echo "## Quality Gate [$ENV]" >> $GITHUB_STEP_SUMMARY
           
           FAILED=false
           
@@ -640,15 +592,12 @@ jobs:
           fi
           
           if [[ "${{ needs.plan.result }}" == "success" ]]; then
-            echo "✅ OpenTofu plan succeeded" >> $GITHUB_STEP_SUMMARY
+            echo "✅ Plan succeeded" >> $GITHUB_STEP_SUMMARY
           else
-            echo "❌ OpenTofu plan failed" >> $GITHUB_STEP_SUMMARY
+            echo "❌ Plan failed" >> $GITHUB_STEP_SUMMARY
             FAILED=true
           fi
           
           if [[ "$FAILED" == "true" ]]; then
-            echo "### ❌ Quality Gate Failed" >> $GITHUB_STEP_SUMMARY
             exit 1
-          else
-            echo "### ✅ All Quality Gates Passed" >> $GITHUB_STEP_SUMMARY
           fi

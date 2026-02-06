@@ -71,13 +71,10 @@ output "kube_config" {
   sensitive   = true
 }
 
-# -----------------------------------------------------------------------------
-# Node Pool Outputs
-# -----------------------------------------------------------------------------
-
-output "node_pools" {
-  description = "Map of additional node pool configurations"
-  value       = module.azurerm-aks.node_pools
+output "kube_admin_config_host" {
+  description = "Kubernetes API server host (admin credentials)"
+  value       = module.azurerm-aks.kube_admin_config_host
+  sensitive   = true
 }
 
 # -----------------------------------------------------------------------------
@@ -92,11 +89,6 @@ output "storage_account_id" {
 output "storage_account_name" {
   description = "The name of the storage account"
   value       = module.azurerm-aks.storage_account_name
-}
-
-output "storage_account_primary_blob_endpoint" {
-  description = "The primary blob endpoint of the storage account"
-  value       = module.azurerm-aks.storage_account_primary_blob_endpoint
 }
 
 # -----------------------------------------------------------------------------
@@ -127,39 +119,48 @@ output "workload_identities" {
   value       = module.azurerm-aks.workload_identities
 }
 
-output "workload_identity_federated_credentials" {
-  description = "Map of federated credential details for Kubernetes service accounts"
-  value       = module.azurerm-aks.workload_identity_federated_credentials
+# -----------------------------------------------------------------------------
+# Ingress Controller Outputs
+# -----------------------------------------------------------------------------
+
+output "ingress_nginx_load_balancer_ip" {
+  description = "The external IP address of the NGINX ingress controller"
+  value       = var.enable_ingress_nginx ? module.ingress_nginx[0].load_balancer_ip : null
+}
+
+output "ingress_nginx_class_name" {
+  description = "The IngressClass name to use in Ingress resources"
+  value       = var.enable_ingress_nginx ? module.ingress_nginx[0].ingress_class_name : null
 }
 
 # -----------------------------------------------------------------------------
-# Identity Outputs
+# DNS Zone Outputs
 # -----------------------------------------------------------------------------
 
-output "aks_control_plane_identity_client_id" {
-  description = "The Client ID of the AKS control plane managed identity"
-  value       = module.azurerm-aks.aks_control_plane_identity_client_id
+output "dns_zones" {
+  description = "Map of created DNS zone details"
+  value       = module.azurerm-aks.dns_zones
 }
 
-output "key_vault_secrets_provider_identity_client_id" {
-  description = "The Client ID of the Key Vault Secrets Provider identity"
-  value       = module.azurerm-aks.key_vault_secrets_provider_identity_client_id
+output "all_dns_zones" {
+  description = "Map of all DNS zone details (created and existing)"
+  value       = module.azurerm-aks.all_dns_zones
 }
 
 # -----------------------------------------------------------------------------
-# Cert-Manager Outputs
+# Cluster Test Outputs
 # -----------------------------------------------------------------------------
 
-output "cert_manager_namespace" {
-  description = "The namespace where cert-manager is installed"
-  value       = var.enable_cert_manager ? module.cert_manager[0].namespace : null
+output "cluster_test_url" {
+  description = "The URL to access the cluster test app"
+  value       = var.enable_cluster_test ? module.cluster_test[0].url : null
 }
 
-output "cert_manager_issuers" {
-  description = "Available ClusterIssuers for certificate generation"
-  value = var.enable_cert_manager ? {
-    self_signed         = module.cert_manager[0].self_signed_issuer_name
-    letsencrypt_staging = module.cert_manager[0].letsencrypt_staging_issuer_name
-    letsencrypt_prod    = module.cert_manager[0].letsencrypt_prod_issuer_name
-  } : null
+# -----------------------------------------------------------------------------
+# Azure Entra Groups Outputs
+# -----------------------------------------------------------------------------
+
+output "entra_groups" {
+  description = "Map of created Azure Entra group details"
+  value       = var.enable_entra_groups ? module.entra_groups[0].groups : {}
 }

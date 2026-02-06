@@ -96,26 +96,48 @@ output "kube_config_host" {
   sensitive   = true
 }
 
-output "aks_host" {
-  description = "Kubernetes API server host (for provider config)"
+output "kube_config_client_certificate" {
+  description = "Kubernetes client certificate (base64 encoded)"
+  value       = azurerm_kubernetes_cluster.aks.kube_config[0].client_certificate
+  sensitive   = true
+}
+
+output "kube_config_client_key" {
+  description = "Kubernetes client key (base64 encoded)"
+  value       = azurerm_kubernetes_cluster.aks.kube_config[0].client_key
+  sensitive   = true
+}
+
+output "kube_config_cluster_ca_certificate" {
+  description = "Kubernetes cluster CA certificate (base64 encoded)"
+  value       = azurerm_kubernetes_cluster.aks.kube_config[0].cluster_ca_certificate
+  sensitive   = true
+}
+
+# -----------------------------------------------------------------------------
+# Admin Kubeconfig Outputs (for Azure RBAC clusters - bypasses AAD auth)
+# -----------------------------------------------------------------------------
+
+output "kube_admin_config_host" {
+  description = "Kubernetes API server host (admin)"
   value       = azurerm_kubernetes_cluster.aks.kube_admin_config[0].host
   sensitive   = true
 }
 
-output "aks_client_certificate" {
-  description = "Base64 encoded client certificate"
+output "kube_admin_config_client_certificate" {
+  description = "Kubernetes admin client certificate (base64 encoded)"
   value       = azurerm_kubernetes_cluster.aks.kube_admin_config[0].client_certificate
   sensitive   = true
 }
 
-output "aks_client_key" {
-  description = "Base64 encoded client key"
+output "kube_admin_config_client_key" {
+  description = "Kubernetes admin client key (base64 encoded)"
   value       = azurerm_kubernetes_cluster.aks.kube_admin_config[0].client_key
   sensitive   = true
 }
 
-output "aks_cluster_ca_certificate" {
-  description = "Base64 encoded cluster CA certificate"
+output "kube_admin_config_cluster_ca_certificate" {
+  description = "Kubernetes cluster CA certificate (base64 encoded, admin)"
   value       = azurerm_kubernetes_cluster.aks.kube_admin_config[0].cluster_ca_certificate
   sensitive   = true
 }
@@ -211,4 +233,60 @@ output "workload_identity_federated_credentials" {
       subject = v.subject
     }
   }
+}
+
+# -----------------------------------------------------------------------------
+# DNS Zone Outputs
+# -----------------------------------------------------------------------------
+
+output "dns_zones" {
+  description = "Map of created DNS zone details"
+  value = {
+    for k, v in azurerm_dns_zone.zones : k => {
+      id                  = v.id
+      name                = v.name
+      name_servers        = v.name_servers
+      resource_group_name = v.resource_group_name
+    }
+  }
+}
+
+output "existing_dns_zones" {
+  description = "Map of existing DNS zone details"
+  value = {
+    for k, v in data.azurerm_dns_zone.existing : k => {
+      id                  = v.id
+      name                = v.name
+      name_servers        = v.name_servers
+      resource_group_name = v.resource_group_name
+    }
+  }
+}
+
+# Combined output for all DNS zones (both created and existing)
+output "all_dns_zones" {
+  description = "Map of all DNS zone details (created and existing)"
+  value = merge(
+    {
+      for k, v in azurerm_dns_zone.zones : k => {
+        id                  = v.id
+        name                = v.name
+        name_servers        = v.name_servers
+        resource_group_name = v.resource_group_name
+      }
+    },
+    {
+      for k, v in data.azurerm_dns_zone.existing : k => {
+        id                  = v.id
+        name                = v.name
+        name_servers        = v.name_servers
+        resource_group_name = v.resource_group_name
+      }
+    }
+  )
+}
+
+output "subscription_id" {
+  description = "The Azure subscription ID (needed for cert-manager DNS01 solver)"
+  value       = data.azurerm_client_config.current.subscription_id
 }

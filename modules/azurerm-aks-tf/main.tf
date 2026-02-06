@@ -303,3 +303,42 @@ resource "azurerm_key_vault_secret" "workload_identity_tenant_id" {
 
   depends_on = [azurerm_role_assignment.kv_admin]
 }
+
+# -----------------------------------------------------------------------------
+# Azure DNS Zones (for cert-manager DNS-01 challenges)
+# -----------------------------------------------------------------------------
+
+# Create new DNS zones (if specified)
+resource "azurerm_dns_zone" "zones" {
+  for_each = var.dns_zones
+
+  name                = each.value.name
+  resource_group_name = azurerm_resource_group.aks.name
+  tags                = var.tags
+}
+
+# Reference existing DNS zones (if specified)
+data "azurerm_dns_zone" "existing" {
+  for_each = var.existing_dns_zones
+
+  name                = each.value.name
+  resource_group_name = each.value.resource_group_name
+}
+
+# Grant DNS Zone Contributor to cert-manager workload identity (for created zones)
+resource "azurerm_role_assignment" "dns_zone_contributor" {
+  for_each = contains(keys(var.workload_identities), "cert-manager") ? var.dns_zones : {}
+
+  scope                = azurerm_dns_zone.zones[each.key].id
+  role_definition_name = "DNS Zone Contributor"
+  principal_id         = azurerm_user_assigned_identity.workload["cert-manager"].principal_id
+}
+
+# Grant DNS Zone Contributor to cert-manager workload identity (for existing zones)
+resource "azurerm_role_assignment" "dns_zone_contributor_existing" {
+  for_each = contains(keys(var.workload_identities), "cert-manager") ? var.existing_dns_zones : {}
+
+  scope                = data.azurerm_dns_zone.existing[each.key].id
+  role_definition_name = "DNS Zone Contributor"
+  principal_id         = azurerm_user_assigned_identity.workload["cert-manager"].principal_id
+}
