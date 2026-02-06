@@ -652,6 +652,7 @@ jobs:
             ["helm-postgres-svr-tf"]="infra/postgres-svr"
             ["helm-postgres-db-tf"]="infra/postgres-db"
             ["azuread-groups-tf"]="infra/entra-groups"
+            ["k8s-cluster-test-tf"]="infra/cluster-test"
           )
           
           for module in $CHANGED_MODULES; do
