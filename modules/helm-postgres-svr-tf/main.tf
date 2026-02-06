@@ -51,15 +51,14 @@ resource "helm_release" "cloudnative_pg" {
   version    = var.operator_version
   namespace  = kubernetes_namespace_v1.postgres.metadata[0].name
 
-  set {
-    name  = "replicaCount"
-    value = "1"
-  }
-
-  set {
-    name  = "monitoring.podMonitorEnabled"
-    value = var.enable_monitoring
-  }
+  values = [
+    yamlencode({
+      replicaCount = 1
+      monitoring = {
+        podMonitorEnabled = var.enable_monitoring
+      }
+    })
+  ]
 
   wait    = true
   timeout = 600
