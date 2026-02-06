@@ -64,32 +64,28 @@ cert_manager_self_signed_issuer  = true
 cert_manager_letsencrypt_issuers = true
 
 # ─────────────────────────────────────────────────────────────────────────────
-# DNS Zones (disabled - enable when DNS is configured)
+# DNS Zones
 # ─────────────────────────────────────────────────────────────────────────────
 
-existing_dns_zones = {}
-
-# existing_dns_zones = {
-#   dev = {
-#     name                = "dev.tune.exchange"
-#     resource_group_name = "dev-dns-rg"
-#   }
-# }
+existing_dns_zones = {
+  dev = {
+    name                = "dev.tune.exchange"
+    resource_group_name = "dev-dns-rg"
+  }
+}
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Wildcard Certificates (disabled - enable when DNS is configured)
+# Wildcard Certificates
 # ─────────────────────────────────────────────────────────────────────────────
 
-wildcard_certificates = {}
-
-# wildcard_certificates = {
-#   wildcard-dev = {
-#     dns_name         = "*.dev.tune.exchange"
-#     issuer_name      = "letsencrypt-dns-prod"
-#     secret_name      = "wildcard-dev-tune-exchange-tls"
-#     target_namespace = "ingress-nginx"
-#   }
-# }
+wildcard_certificates = {
+  wildcard-dev = {
+    dns_name         = "*.dev.tune.exchange"
+    issuer_name      = "letsencrypt-dns-prod"
+    secret_name      = "wildcard-dev-tune-exchange-tls"
+    target_namespace = "ingress-nginx"
+  }
+}
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Cluster Test App
