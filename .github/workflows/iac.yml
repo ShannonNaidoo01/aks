@@ -158,62 +158,74 @@ jobs:
             else
               STACKS="[{\"name\":\"$STACK\",\"app\":\"\"}]"
             fi
+            STACKS_COUNT=$(echo "$STACKS" | jq 'length')
             echo "stacks=$STACKS" >> $GITHUB_OUTPUT
-            echo "stacks_count=$(echo $STACKS | jq length)" >> $GITHUB_OUTPUT
-            echo "📦 Manual trigger for stack(s): $STACKS"
+            echo "stacks_count=$STACKS_COUNT" >> $GITHUB_OUTPUT
+            echo "📦 Manual trigger for stack(s): $STACKS (count: $STACKS_COUNT)"
             exit 0
           fi
           
           # Auto-detect changed stacks
+          CHANGED_STACKS=""
+          
+          # For push events, try to detect changes
           if [[ "${{ github.event_name }}" == "pull_request" ]]; then
             BASE_SHA="${{ github.event.pull_request.base.sha }}"
+            echo "PR base: $BASE_SHA"
           else
             BASE_SHA="${{ github.event.before }}"
+            echo "Push before: $BASE_SHA"
+            
             # Handle first commit or force push
             if [[ "$BASE_SHA" == "0000000000000000000000000000000000000000" ]]; then
-              # Try to get previous commit, fallback to empty tree for first commit
-              BASE_SHA=$(git rev-parse HEAD~1 2>/dev/null || git hash-object -t tree /dev/null)
+              BASE_SHA=$(git rev-parse HEAD~1 2>/dev/null || echo "")
+              echo "Fallback to HEAD~1: $BASE_SHA"
             fi
           fi
           
-          echo "Comparing $BASE_SHA to HEAD"
-          
-          # Find changed stacks (excluding postgres-db for auto-detect)
-          CHANGED_STACKS=$(git diff --name-only "$BASE_SHA" HEAD -- 'stacks/' 2>/dev/null | \
-            grep '^stacks/' | \
-            cut -d'/' -f2 | \
-            grep -v 'postgres-db' | \
-            sort -u || echo "")
-          
-          # Check if modules changed (affects env-scope stacks)
-          MODULES_CHANGED=$(git diff --name-only "$BASE_SHA" HEAD -- 'modules/' 2>/dev/null | wc -l)
-          
-          if [[ "$MODULES_CHANGED" -gt 0 ]]; then
-            echo "Modules changed - including env-scope stacks"
-            CHANGED_STACKS="core postgres-svr"
-          fi
-          
-          # If still no stacks detected but stacks/ or modules/ exist, include all env-scope stacks
-          if [[ -z "$CHANGED_STACKS" ]]; then
-            # Check if this looks like a first-time setup (stacks exist but no changes detected)
-            if [[ -d "stacks/core" ]] || [[ -d "stacks/postgres-svr" ]]; then
-              echo "No specific changes detected, checking for new stacks..."
-              # List all env-scope stacks that exist
-              for stack in core postgres-svr; do
-                if [[ -d "stacks/$stack" ]]; then
-                  CHANGED_STACKS="$CHANGED_STACKS $stack"
-                fi
-              done
-              CHANGED_STACKS=$(echo "$CHANGED_STACKS" | xargs)
+          # Try to detect changes if we have a valid base
+          if [[ -n "$BASE_SHA" ]]; then
+            echo "Comparing $BASE_SHA to HEAD"
+            
+            # Find changed stacks
+            CHANGED_STACKS=$(git diff --name-only "$BASE_SHA" HEAD -- 'stacks/' 2>/dev/null | \
+              grep '^stacks/' | \
+              cut -d'/' -f2 | \
+              grep -v 'postgres-db' | \
+              sort -u || echo "")
+            
+            # Check if modules changed
+            MODULES_CHANGED=$(git diff --name-only "$BASE_SHA" HEAD -- 'modules/' 2>/dev/null | wc -l || echo "0")
+            
+            if [[ "$MODULES_CHANGED" -gt 0 ]]; then
+              echo "Modules changed ($MODULES_CHANGED files) - including env-scope stacks"
+              CHANGED_STACKS="core postgres-svr"
             fi
+            
+            echo "Detected changes: $CHANGED_STACKS"
+          fi
+          
+          # If no changes detected, include all env-scope stacks that exist
+          if [[ -z "$CHANGED_STACKS" || "$CHANGED_STACKS" == " " ]]; then
+            echo "No specific changes detected, including all existing env-scope stacks..."
+            CHANGED_STACKS=""
+            for stack in core postgres-svr; do
+              if [[ -d "stacks/$stack" ]]; then
+                CHANGED_STACKS="$CHANGED_STACKS $stack"
+                echo "  Found stack: $stack"
+              fi
+            done
+            CHANGED_STACKS=$(echo "$CHANGED_STACKS" | xargs)
           fi
           
           if [[ -z "$CHANGED_STACKS" ]]; then
-            echo "No stacks to deploy"
+            echo "❌ No stacks found to deploy"
             echo "stacks=[]" >> $GITHUB_OUTPUT
             echo "stacks_count=0" >> $GITHUB_OUTPUT
             exit 0
           fi
+          
+          echo "📦 Stacks to process: $CHANGED_STACKS"
           
           # Build JSON array (env-scope stacks only for auto-detect)
           STACKS_JSON="["
@@ -229,9 +241,13 @@ jobs:
           done
           STACKS_JSON="$STACKS_JSON]"
           
+          STACKS_COUNT=$(echo "$STACKS_JSON" | jq 'length')
+          
           echo "stacks=$STACKS_JSON" >> $GITHUB_OUTPUT
-          echo "stacks_count=$(echo $STACKS_JSON | jq length)" >> $GITHUB_OUTPUT
-          echo "📦 Changed stacks: $STACKS_JSON"
+          echo "stacks_count=$STACKS_COUNT" >> $GITHUB_OUTPUT
+          
+          echo "📦 Final stacks JSON: $STACKS_JSON"
+          echo "📦 Stack count: $STACKS_COUNT"
 
   # ============================================================================
   # Validate: Format and syntax check
