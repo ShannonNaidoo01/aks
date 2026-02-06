@@ -133,9 +133,9 @@ variable "cert_manager_client_id" {
 variable "wildcard_certificates" {
   description = "Map of wildcard certificates to create"
   type = map(object({
-    dns_name       = string # e.g., "*.dev.tune.exchange"
-    issuer_name    = string # e.g., "letsencrypt-dns-prod"
-    secret_name    = string # e.g., "wildcard-dev-tune-exchange-tls"
+    dns_name         = string                      # e.g., "*.dev.tune.exchange"
+    issuer_name      = string                      # e.g., "letsencrypt-dns-prod"
+    secret_name      = string                      # e.g., "wildcard-dev-tune-exchange-tls"
     target_namespace = optional(string, "default") # Namespace to create the secret in
   }))
   default = {}

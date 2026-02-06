@@ -48,7 +48,7 @@ workload_identities = {}
 # ─────────────────────────────────────────────────────────────────────────────
 
 enable_ingress_nginx        = true
-ingress_nginx_replica_count = 3  # Higher HA for production
+ingress_nginx_replica_count = 3 # Higher HA for production
 ingress_nginx_internal_lb   = false
 
 # ─────────────────────────────────────────────────────────────────────────────

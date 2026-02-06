@@ -21,7 +21,7 @@ variable "pgbouncer_host" {
 variable "pgbouncer_host_ro" {
   description = "PgBouncer host for read-only connections (replicas)"
   type        = string
-  default     = ""  # If empty, uses pgbouncer_host
+  default     = "" # If empty, uses pgbouncer_host
 }
 
 variable "postgres_superuser_secret" {

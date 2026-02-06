@@ -23,14 +23,14 @@ max_connections = 200
 shared_buffers  = "512MB"
 
 # PgBouncer Configuration
-pgbouncer_instances         = 3           # HA for production
+pgbouncer_instances         = 3 # HA for production
 pgbouncer_pool_mode         = "transaction"
-pgbouncer_max_client_conn   = 2000        # High capacity for prod
+pgbouncer_max_client_conn   = 2000 # High capacity for prod
 pgbouncer_default_pool_size = 50
-pgbouncer_enable_ro_pooler  = true        # Enable for read replicas
+pgbouncer_enable_ro_pooler  = true # Enable for read replicas
 
 # Backups
-enable_backups = false  # Enable when backup storage is configured
+enable_backups = false # Enable when backup storage is configured
 
 # Monitoring
 enable_monitoring = true

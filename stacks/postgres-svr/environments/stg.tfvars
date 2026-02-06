@@ -27,10 +27,10 @@ pgbouncer_instances         = 2
 pgbouncer_pool_mode         = "transaction"
 pgbouncer_max_client_conn   = 750
 pgbouncer_default_pool_size = 20
-pgbouncer_enable_ro_pooler  = true  # Enable for read replicas
+pgbouncer_enable_ro_pooler  = true # Enable for read replicas
 
 # Backups
-enable_backups = false  # Enable when backup storage is configured
+enable_backups = false # Enable when backup storage is configured
 
 # Monitoring
 enable_monitoring = true

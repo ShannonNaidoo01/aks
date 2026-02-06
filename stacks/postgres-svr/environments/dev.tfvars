@@ -23,11 +23,11 @@ max_connections = 50
 shared_buffers  = "128MB"
 
 # PgBouncer Configuration
-pgbouncer_instances         = 1          # Single instance for dev
+pgbouncer_instances         = 1 # Single instance for dev
 pgbouncer_pool_mode         = "transaction"
-pgbouncer_max_client_conn   = 500        # Lower for dev
+pgbouncer_max_client_conn   = 500 # Lower for dev
 pgbouncer_default_pool_size = 10
-pgbouncer_enable_ro_pooler  = false      # No read replicas in dev
+pgbouncer_enable_ro_pooler  = false # No read replicas in dev
 
 # Backups disabled for dev
 enable_backups = false

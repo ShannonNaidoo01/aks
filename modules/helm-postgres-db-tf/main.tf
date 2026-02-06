@@ -40,12 +40,12 @@ resource "kubernetes_secret_v1" "db_credentials" {
     password = random_password.db_password.result
     database = var.database_name
     # PgBouncer endpoint - READ/WRITE (recommended for apps)
-    host     = var.pgbouncer_host
-    port     = "5432"
-    uri      = "postgresql://${var.database_user}:${random_password.db_password.result}@${var.pgbouncer_host}:5432/${var.database_name}"
+    host = var.pgbouncer_host
+    port = "5432"
+    uri  = "postgresql://${var.database_user}:${random_password.db_password.result}@${var.pgbouncer_host}:5432/${var.database_name}"
     # PgBouncer endpoint - READ ONLY (for read replicas)
-    host_ro  = var.pgbouncer_host_ro != "" ? var.pgbouncer_host_ro : var.pgbouncer_host
-    uri_ro   = "postgresql://${var.database_user}:${random_password.db_password.result}@${var.pgbouncer_host_ro != "" ? var.pgbouncer_host_ro : var.pgbouncer_host}:5432/${var.database_name}"
+    host_ro = var.pgbouncer_host_ro != "" ? var.pgbouncer_host_ro : var.pgbouncer_host
+    uri_ro  = "postgresql://${var.database_user}:${random_password.db_password.result}@${var.pgbouncer_host_ro != "" ? var.pgbouncer_host_ro : var.pgbouncer_host}:5432/${var.database_name}"
     # Direct PostgreSQL endpoint (for admin/migration tasks)
     host_direct = var.postgres_host
     uri_direct  = "postgresql://${var.database_user}:${random_password.db_password.result}@${var.postgres_host}:5432/${var.database_name}"

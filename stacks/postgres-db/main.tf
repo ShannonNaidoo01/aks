@@ -77,9 +77,9 @@ module "postgres_database" {
 
   # PostgreSQL server reference
   postgres_namespace        = var.postgres_namespace
-  postgres_host             = var.postgres_host         # Direct (for DDL)
-  pgbouncer_host            = var.pgbouncer_host        # Pooled RW (primary)
-  pgbouncer_host_ro         = var.pgbouncer_host_ro     # Pooled RO (replicas)
+  postgres_host             = var.postgres_host     # Direct (for DDL)
+  pgbouncer_host            = var.pgbouncer_host    # Pooled RW (primary)
+  pgbouncer_host_ro         = var.pgbouncer_host_ro # Pooled RO (replicas)
   postgres_superuser_secret = var.postgres_superuser_secret
 
   # Database configuration

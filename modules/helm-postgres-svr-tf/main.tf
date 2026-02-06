@@ -97,10 +97,10 @@ resource "kubectl_manifest" "postgres_cluster" {
       # Bootstrap configuration
       bootstrap = {
         initdb = {
-          database = var.default_database
-          owner    = var.default_user
-          encoding = "UTF8"
-          localeCType = "C"
+          database      = var.default_database
+          owner         = var.default_user
+          encoding      = "UTF8"
+          localeCType   = "C"
           localeCollate = "C"
         }
       }
@@ -108,25 +108,25 @@ resource "kubectl_manifest" "postgres_cluster" {
       # PostgreSQL configuration
       postgresql = {
         parameters = {
-          max_connections      = tostring(var.max_connections)
-          shared_buffers       = var.shared_buffers
-          effective_cache_size = var.effective_cache_size
-          maintenance_work_mem = var.maintenance_work_mem
-          checkpoint_completion_target = "0.9"
-          wal_buffers          = "16MB"
-          default_statistics_target = "100"
-          random_page_cost     = "1.1"
-          effective_io_concurrency = "200"
-          min_wal_size         = "1GB"
-          max_wal_size         = "4GB"
-          max_worker_processes = "4"
-          max_parallel_workers_per_gather = "2"
-          max_parallel_workers = "4"
+          max_connections                  = tostring(var.max_connections)
+          shared_buffers                   = var.shared_buffers
+          effective_cache_size             = var.effective_cache_size
+          maintenance_work_mem             = var.maintenance_work_mem
+          checkpoint_completion_target     = "0.9"
+          wal_buffers                      = "16MB"
+          default_statistics_target        = "100"
+          random_page_cost                 = "1.1"
+          effective_io_concurrency         = "200"
+          min_wal_size                     = "1GB"
+          max_wal_size                     = "4GB"
+          max_worker_processes             = "4"
+          max_parallel_workers_per_gather  = "2"
+          max_parallel_workers             = "4"
           max_parallel_maintenance_workers = "2"
           # PgBouncer friendly settings
-          tcp_keepalives_idle  = "600"
+          tcp_keepalives_idle     = "600"
           tcp_keepalives_interval = "30"
-          tcp_keepalives_count = "10"
+          tcp_keepalives_count    = "10"
         }
         pg_hba = [
           "host all all 10.0.0.0/8 scram-sha-256",
@@ -235,25 +235,25 @@ resource "kubectl_manifest" "pgbouncer_pooler" {
         # Parameters
         parameters = {
           # Connection limits
-          max_client_conn       = tostring(var.pgbouncer_max_client_conn)
-          default_pool_size     = tostring(var.pgbouncer_default_pool_size)
-          min_pool_size         = tostring(var.pgbouncer_min_pool_size)
-          reserve_pool_size     = tostring(var.pgbouncer_reserve_pool_size)
-          reserve_pool_timeout  = tostring(var.pgbouncer_reserve_pool_timeout)
+          max_client_conn      = tostring(var.pgbouncer_max_client_conn)
+          default_pool_size    = tostring(var.pgbouncer_default_pool_size)
+          min_pool_size        = tostring(var.pgbouncer_min_pool_size)
+          reserve_pool_size    = tostring(var.pgbouncer_reserve_pool_size)
+          reserve_pool_timeout = tostring(var.pgbouncer_reserve_pool_timeout)
 
           # Timeouts
-          server_idle_timeout   = "600"
-          server_lifetime       = "3600"
-          client_idle_timeout   = "0"
-          client_login_timeout  = "60"
-          query_timeout         = "0"
-          query_wait_timeout    = "120"
+          server_idle_timeout  = "600"
+          server_lifetime      = "3600"
+          client_idle_timeout  = "0"
+          client_login_timeout = "60"
+          query_timeout        = "0"
+          query_wait_timeout   = "120"
 
           # Logging
-          log_connections       = "1"
-          log_disconnections    = "1"
-          log_pooler_errors     = "1"
-          stats_period          = "60"
+          log_connections    = "1"
+          log_disconnections = "1"
+          log_pooler_errors  = "1"
+          stats_period       = "60"
 
           # Security
           ignore_startup_parameters = "extra_float_digits,options"
@@ -325,14 +325,14 @@ resource "kubectl_manifest" "pgbouncer_pooler_ro" {
       pgbouncer = {
         poolMode = var.pgbouncer_pool_mode
         parameters = {
-          max_client_conn       = tostring(var.pgbouncer_max_client_conn)
-          default_pool_size     = tostring(var.pgbouncer_default_pool_size)
-          min_pool_size         = tostring(var.pgbouncer_min_pool_size)
-          reserve_pool_size     = tostring(var.pgbouncer_reserve_pool_size)
-          server_idle_timeout   = "600"
-          server_lifetime       = "3600"
-          log_connections       = "1"
-          log_disconnections    = "1"
+          max_client_conn     = tostring(var.pgbouncer_max_client_conn)
+          default_pool_size   = tostring(var.pgbouncer_default_pool_size)
+          min_pool_size       = tostring(var.pgbouncer_min_pool_size)
+          reserve_pool_size   = tostring(var.pgbouncer_reserve_pool_size)
+          server_idle_timeout = "600"
+          server_lifetime     = "3600"
+          log_connections     = "1"
+          log_disconnections  = "1"
         }
         authQuerySecret = {
           name = "${var.cluster_name}-superuser"
