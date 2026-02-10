@@ -66,7 +66,7 @@ on:
           - postgres-db
           - all
       app_name:
-        description: 'App name (required for postgres-db, e.g., app1, app2)'
+        description: 'App name (required for postgres-db, e.g., content, trading)'
         required: false
         default: ''
         type: string
